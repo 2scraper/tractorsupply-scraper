@@ -48,7 +48,7 @@ jobs:
             floor: 120
           # 1,076 results on 2026-09-28.
           - mode: search
-            args: "--search \"dog food\" --sort price-asc"
+            args: "--search 'dog food' --sort price-asc"
             floor: 120
     env:
       TRACTORSUPPLY_CDP_ENDPOINT: ${{ secrets.TRACTORSUPPLY_CDP_ENDPOINT }}
@@ -79,7 +79,7 @@ jobs:
         run: |
           set +e   # `run:` is `bash -e`; without this a non-zero exit aborts
                    # the step before the echo below records it.
-          eval python playwright_scraper.py ${{ matrix.args }} --pages 3 \
+          python playwright_scraper.py ${{ matrix.args }} --pages 3 \
             --out canary --format both --dump-html canary_dump.ndjson
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
