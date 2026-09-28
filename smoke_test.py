@@ -118,6 +118,7 @@ def check_fixture_corpus_is_real_and_scrubbed():
     expected = {"cat_p1", "cat_p2", "cat_past_end", "cat_unknown_id", "price_ga",
                 "price_tx", "kw_p1", "kw_junk", "rejected_zone", "rejected_sort",
                 "rejected_page_size", "rejected_no_channel", "rejected_no_store",
+                "circuit_breaker",
                 "stores_75001", "stores_99501", "page_category",
                 "page_department_farm_ranch", "page_department_pet", "page_missing",
                 "akamai_raw", "akamai_dom_cdp", "landing_cdp"}
@@ -412,6 +413,8 @@ def check_page_states_on_real_captures():
               "akamai_raw": "blocked", "akamai_dom_cdp": "blocked"}
     for name, state in expect.items():
         equal("%s -> %s" % (name, state), F.classify(fx(name), status_of(name)), state)
+    equal("a tripped circuit breaker is UNAVAILABLE, not a refused parameter",
+          F.classify(fx("circuit_breaker"), 200), "unavailable")
     equal("the wrong-zone failure arrives under HTTP 200 and is still rejected",
           F.classify(fx("rejected_zone"), 200), "rejected")
     check("...and names the site's own complaint",
@@ -451,7 +454,9 @@ def check_state_policy():
     import page_flow as F
     equal("every state has a policy", sorted(F.STATE_POLICY),
           ["blocked", "challenge", "content", "empty", "missing", "rejected",
-           "throttled", "unknown"])
+           "throttled", "unavailable", "unknown"])
+    check("unavailable: retried, NOT blocked", F.should_retry("unavailable")
+          and not F.counts_as_blocked("unavailable") and not F.should_parse("unavailable"))
     check("content and empty are parsed, never retried or blocked",
           all(F.should_parse(s) and not F.should_retry(s) and not F.counts_as_blocked(s)
               for s in ("content", "empty")))
@@ -598,6 +603,17 @@ def check_the_shared_loop_end_to_end():
     equal("a REJECTED page 1 (under HTTP 200): exit 5, the data never arrived", rc, 5)
     equal("...fetched once, not retried", ops.fetches, ["stores", "page", 1])
     equal("...and no sidecar beside no output", meta, None)
+
+    ops = _FakeOps(search={1: [(200, fx("cat_p1"))],
+                           2: [(200, fx("circuit_breaker")), (200, fx("cat_p2"))]})
+    rc, meta, rows, ops = _run(ops, pages=2)
+    equal("a circuit breaker on page 2, then the page: exit 0, complete",
+          (rc, meta and meta["status"]), (0, "complete"))
+    equal("...page 2 asked for twice", ops.fetches, ["stores", "page", 1, 2, 2])
+    ops = _FakeOps(search={1: [(200, fx("cat_p1"))], 2: [(200, fx("circuit_breaker"))]})
+    rc, meta, rows, ops = _run(ops, pages=2)
+    equal("...and one that persists is a partial run that says so", (rc, meta["stop_reason"]),
+          (6, "page_load_timeout"))
 
     rc, meta, rows, ops = _run(_FakeOps(search={1: [(403, fx("akamai_raw"))]}))
     equal("Akamai on page 1: exit 3", rc, 3)

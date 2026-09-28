@@ -450,6 +450,22 @@ def _entries(cat_rec: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return [e for e in (data.get("catalogEntryView") or []) if isinstance(e, dict)]
 
 
+# A `catalog` record's `error` is not always about the request. Two kinds
+# were met, and they want opposite answers:
+#
+#   "Cannot invoke \"java.lang.Double.doubleValue()\" ..."  a wrong pricing zone:
+#       the same request fails the same way every time -> rejected
+#   "CircuitBreakerFallbackException"   page 3 of a search that answered
+#       pages 1-2 a second earlier, on the canary's second dispatch
+#       (2026-09-28): the backend's circuit breaker had tripped. Nothing
+#       about the request was wrong -> unavailable, retried after a pause.
+#
+# Treating the second as `rejected` stopped that canary with a partial run
+# and a log telling the reader their parameters were wrong.
+_TRANSIENT_ERROR_RE = re.compile(r"CircuitBreaker|Fallback|Timeout|Unavailable|"
+                                 r"temporarily|ServiceException", re.I)
+
+
 def detect_page_state(text: Optional[str], status: Optional[int] = None,
                       url: str = "", waf_action: Optional[str] = None) -> str:
     """Name what the search endpoint answered with. See page_flow.STATE_POLICY.
@@ -457,8 +473,11 @@ def detect_page_state(text: Optional[str], status: Optional[int] = None,
         content     a `catalog` record with products in it
         empty       a `catalog` record with none, and no error: an answer
         rejected    the endpoint refused the PARAMETERS: `errorCode`, HTTP
-                    400, or a `catalog` record carrying `error` (the wrong-
-                    zone NullPointerException arrives under HTTP 200)
+                    400, or a `catalog` record carrying a deterministic
+                    `error` (the wrong-zone NullPointerException arrives
+                    under HTTP 200)
+        unavailable a `catalog` record whose `error` is the backend's own
+                    transient failure (CircuitBreakerFallbackException)
         challenge   Akamai's interactive challenge. Not observed (above).
         blocked     Akamai's Access Denied, or any 403
         throttled   429. Not observed on this site; the status's meaning.
@@ -471,7 +490,8 @@ def detect_page_state(text: Optional[str], status: Optional[int] = None,
     cat = catalog_record(text)
     if cat is not None:
         if cat.get("error"):
-            return "rejected"
+            return ("unavailable" if _TRANSIENT_ERROR_RE.search(str(cat["error"]))
+                    else "rejected")
         return "content" if _entries(cat) else "empty"
     payload = _json_or_none(text)
     if isinstance(payload, dict) and ("errorCode" in payload or "errorMessage" in payload):

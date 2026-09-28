@@ -115,6 +115,29 @@
   },
   "text": "{\"type\": \"thread_start\", \"data\": {\"message\": \"Stream thread started\", \"threadId\": \"task-6\", \"timestamp\": 1790585377489}}\n{\"type\": \"catalog\", \"data\": {\"recordSetCount\": 0, \"recordSetStartNumber\": 0, \"responseTimeMS\": 56, \"recordSetComplete\": \"true\", \"metaData\": {\"resultsFound\": 0, \"price\": \"1\", \"queryParams\": [{\"q\": \"999999999\", \"fq\": \"\"}], \"removedFacets\": [], \"appliedFilters\": [], \"currentUrl\": \"?filter=\", \"cesResult\": false, \"relaxedQuery\": \"\", \"spellCorrectedQuery\": \"\", \"spellCheckSuggestions\": [], \"redirectURL\": \"\", \"isBrandQuery\": false, \"isCategoryQuery\": true}, \"relatedSearches\": [], \"catalogEntryView\": [], \"breadCrumbTrailEntryView\": [], \"breadCrumbTrailEntryViewExtended\": [], \"resourceId\": \"https://pwcdauseo-zone.cnstrc.com/browse/group_id/999999999?key=*****&us=web&us=Desktop&page=1&num_results_per_page=24&fmt_options[hidden_fields]=prices.z23&fmt_options[hidden_fields]=availability.s2293_A&fmt_options[hidden_fields]=availability.s568_A&fmt_options[hidden_fields]=availability.s1581_A&fmt_options[hidden_fields]=availability.s1964_A&fmt_options[hidden_fields]=availability.s1131_A&fmt_options[hidden_fields]=availability.s2737_A&fmt_options[hidden_fields]=availability.sfsstde&fmt_options[groups_max_depth]=8&fmt_options[groups_start]=top&fmt_options[hidden_facets]=sku_price_23&fmt_options[hidden_facets]=price_23&fmt_options[hidden_facets]=variant_price_type_23&i=be24f331-cae1-4686-8bf4-89a2fa40b877&s=1&c=cio-be-web-tractorsupply&sort_by=relevance&sort_order=descending&fmt_options[facet_options][storeInventory]=2293_A&fmt_options[facet_options][storeInventory]=2293_A_T&fmt_options[facet_options][storeInventory]=568_A&fmt_options[facet_options][storeInventory]=568_A_T&fmt_options[facet_options][storeInventory]=1581_A&fmt_options[facet_options][storeInventory]=1581_A_T&fmt_options[facet_options][storeInventory]=1964_A&fmt_options[facet_options][storeInventory]=1964_A_T&fmt_options[facet_options][storeInventory]=1131_A&fmt_options[facet_options][storeInventory]=1131_A_T&fmt_options[facet_options][storeInventory]=2737_A&fmt_options[facet_options][storeInventory]=2737_A_T&fmt_options[facet_options][storeInventory]=sde&fmt_options[facet_options][storeInventory]=sfsstde&referrer=https://www.tractorsupply.com/&origin_referrer=https://www.tractorsupply.com/\"}}\n{\"message\": \"No products to check inventory for\", \"data\": {}, \"type\": \"oms_inventory\"}\n{\"type\": \"thread_end\", \"data\": {\"message\": \"Stream thread closed — all chunks delivered\", \"threadId\": \"task-6\", \"timestamp\": 1790585377546}}\n"
  },
+ "circuit_breaker": {
+  "kind": "search",
+  "query": {
+   "keyword": "dog food",
+   "mode": "search"
+  },
+  "source": "search_circuit_breaker.ndjson",
+  "status": null,
+  "stores": {
+   "state": null,
+   "store_ids": [
+    "2293",
+    "568",
+    "1581",
+    "1964",
+    "1131",
+    "2737"
+   ],
+   "zip_code": "30013",
+   "zone": "23"
+  },
+  "text": "{\"type\": \"thread_start\", \"data\": {\"threadId\": \"task-3\", \"timestamp\": 1790592446503, \"message\": \"Stream thread started\"}}\n{\"type\": \"catalog\", \"error\": \"CircuitBreakerFallbackException\"}\n{\"data\": {}, \"type\": \"oms_inventory\", \"message\": \"No products to check inventory for\"}\n{\"type\": \"thread_end\", \"data\": {\"threadId\": \"task-3\", \"timestamp\": 1790592449513, \"message\": \"Stream thread closed — all chunks delivered\"}}\n"
+ },
  "kw_junk": {
   "kind": "search",
   "query": {

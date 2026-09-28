@@ -94,6 +94,13 @@ STATE_POLICY = {
     # same request sent again gets the same answer and no exit changes it,
     # so nothing retries and nothing counts as blocked.
     "rejected":   {"retry": False, "blocked": False, "parse": False},
+    # The backend failed on its own side ("CircuitBreakerFallbackException",
+    # met on the canary's page 3 of a search whose pages 1-2 had just
+    # answered). Retried at the same exit after the usual backoff, and NOT
+    # blocked: no exit or solve changes a tripped circuit breaker, and time
+    # does. If it persists the page is "never arrived" (exit 5/6), not a
+    # refused parameter.
+    "unavailable": {"retry": True, "blocked": False, "parse": False},
     # Akamai's interactive challenge. NOT OBSERVED here (product_parser).
     # A fresh browser may pass it, hence retry; there is no widget in it to
     # solve, and it counts as blocked if it persists.
@@ -491,7 +498,7 @@ def fetch_one_page(ops, args, pool, query: Query, page_num: int,
                             throttles, THROTTLE_RETRIES)
                 ops.wait_ms(int(pause * 1000))
                 continue
-            if state in ("load_failed", "unknown") and attempt < args.retries:
+            if state in ("load_failed", "unknown", "unavailable") and attempt < args.retries:
                 pause = args.retry_delay * (2 ** (attempt - 1))
                 log.warning("%s came back %s (attempt %d/%d)%s — retrying in "
                             "%.1fs.", req.label, state, attempt, args.retries,

@@ -38,7 +38,11 @@ browser engines that share one fetch loop.
   bytes, plain in a browser's DOM), and without a status (Selenium has
   none). A wrong pricing zone, which the endpoint answers with an exception
   under HTTP 200, is `rejected`, not content. An unknown category, which
-  answers HTTP 500, is `missing`, not a fault to retry.
+  answers HTTP 500, is `missing`, not a fault to retry. A backend failure
+  reported the same way as a refused parameter (`catalog.error:
+  CircuitBreakerFallbackException`, met by the first canary on page 3 of a
+  search) is `unavailable` and retried, not reported as your parameters
+  being wrong.
 - pyppeteer answers a proxy's auth challenge through CDP's `Fetch` domain:
   its own `page.authenticate()` depends on a method current Chromium lacks.
 

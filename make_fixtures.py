@@ -87,6 +87,9 @@ SOURCES = {
     "kw_p1": ("search_kw_dogfood_p1.ndjson", "search", KW_DOG, GA, [0, 2, 4, 22]),
     "kw_junk": ("search_kw_junk_p1.ndjson", "search", KW_JUNK, GA, [0, 1, 2, 3]),
     "rejected_zone": ("search_rejected_zone1.ndjson", "search", CAT_3PT, GA, None),
+    # The canary's page 3 (2026-09-28): a transient backend failure, not a
+    # refused parameter.
+    "circuit_breaker": ("search_circuit_breaker.ndjson", "search", KW_DOG, GA, None),
     "rejected_sort": ("search_rejected_sort9.json", "verbatim", None, None, None),
     "rejected_page_size": ("search_rejected_pagesize500.json", "verbatim", None, None, None),
     "rejected_no_channel": ("search_rejected_no_channel.json", "verbatim", None, None, None),
