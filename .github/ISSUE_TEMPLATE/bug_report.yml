@@ -7,28 +7,28 @@ body:
       value: |
         **Before anything else: never paste an API key, a proxy password or a
         full `ws://user:pass@...` endpoint into a public issue.** The scrapers
-        mask credentials in their own logs, but raw HTML dumps and the Scraper
-        API's `x-debug` header do not. Replace them with `***`.
+        mask credentials in their own logs, but raw response dumps do not.
+        Replace them with `***`.
 
         A few things answer most reports faster than we can:
 
-        - **Exit 3 from a US address?** Binance's terms exclude some
-          jurisdictions, the United States among them (binance.us is a
-          separate exchange). Try an exit elsewhere, and say in the report
-          what the sidecar's `stop_reason` was: this repo has not measured
-          what such an address is answered with.
-        - **Exit 3 with `blocked_aws-waf`?** The site's AWS WAF challenged
-          the session. The data endpoints were not gated when this repo was
-          written, so this is news worth reporting, together with the exit
-          you used. A residential `--proxy`, or `TWOCAPTCHA_KEY` for the WAF's
-          CAPTCHA (AmazonTask), are the two answers.
-        - **Exit 4, zero rows?** The query may genuinely match nothing, for
-          example a P2P market with no adverts for that payment method. That is
+        - **Exit 3, `blocked_akamai`?** Akamai refused the client. In testing
+          it served exactly one: the Scraping Browser with a US exit
+          (`--cdp-endpoint`, `country-us`). Local Chromium was refused from a
+          datacentre and from a US residential proxy alike. See the README's
+          access table, and say in the report which client you used.
+        - **Exit 5 on connect, HTTP 401?** A Scraping Browser profile's
+          credentials last about a day. Get a fresh endpoint.
+        - **Exit 4, zero rows?** The listing may genuinely be empty. That is
           a correct answer. See
           [TROUBLESHOOTING.md](../blob/main/TROUBLESHOOTING.md).
-        - **Every advert says `sell` on a buy query?** That is the site's
-          own convention: an advert carries the maker's side. `side` says
-          what you asked for; `advertiser_side` is the advert's.
+        - **A search full of unrelated products?** The site answers a query
+          it cannot match with unrelated products rather than with nothing;
+          the run warns, and the sidecar's `query_relevance` says how many
+          rows mention the query.
+        - **Prices differ from what you see on the site?** Prices are per
+          store. The run prices at the stores near `--zip` (default 37027);
+          your browser prices at the store it picked for you.
 
   - type: dropdown
     id: engine
@@ -38,7 +38,6 @@ body:
         - playwright_scraper.py
         - puppeteer_scraper.py
         - selenium_scraper.py
-        - scraper_api_client.py
         - fingerprint_client.py
         - other / not sure
     validations:
@@ -51,7 +50,6 @@ body:
       options:
         - A browser the script launched itself
         - A remote browser over --cdp-endpoint
-        - No browser (scraper_api_client.py over plain HTTP)
         - Not applicable
     validations:
       required: true
@@ -62,7 +60,7 @@ body:
       label: Exit code
       description: >-
         `echo $?` straight after the run. These mean specific things: 3 is a
-        refusal (WAF, 403 or 451), 4 is "ran fine, found nothing", 5 is "the
+        refusal (Akamai), 4 is "ran fine, found nothing", 5 is "the
         data never arrived". The table is in the README.
       placeholder: "4"
     validations:
@@ -76,8 +74,8 @@ body:
       render: shell
       placeholder: |
         python3 playwright_scraper.py \
-          --asset USDT --fiat EUR --side buy \
-          --pages 3 --out usdt_eur
+          --category poultry-feed-treats \
+          --pages 3 --out poultry
     validations:
       required: true
 
@@ -97,7 +95,7 @@ body:
     attributes:
       label: What you expected instead
       placeholder: >-
-        60 adverts over 3 pages, as the site shows ~200 for USDT/EUR.
+        144 products over 3 pages, as the site shows 272 in that category.
     validations:
       required: true
 
@@ -109,7 +107,7 @@ body:
         Please run and paste:
         ```
         python3 -c "import sys, platform; print(sys.version, platform.platform())"
-        pip list 2>/dev/null | grep -Ei "playwright|pyppeteer|selenium|beautifulsoup4|requests|webdriver"
+        pip list 2>/dev/null | grep -Ei "playwright|pyppeteer|selenium|requests|webdriver"
         python3 smoke_test.py | tail -3
         ```
       render: text

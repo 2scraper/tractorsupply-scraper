@@ -11,7 +11,7 @@ public from the moment you press submit.
 
 If private reporting is unavailable to you, mail support@2captcha.com. That is
 2Captcha's general support address rather than a security-only one, so put
-**"binance-scraper security"** in the subject — otherwise it lands in a queue
+**"tractorsupply-scraper security"** in the subject — otherwise it lands in a queue
 about API keys and billing and takes longer to reach the right person.
 
 **What helps most:** the version you are on (commit hash), the exact command,
@@ -37,8 +37,8 @@ In scope:
   than `argv`, precisely because a secret in `argv` is visible to anything that
   can run `ps`. A path we have missed — a log line, an exception message, a
   written file, a request to a third party — is a real bug and we want to know.
-- **Anything that makes a scraped page dangerous to parse.** The parser is
-  handed HTML from a site we do not control. Remote code execution, path
+- **Anything that makes a scraped response dangerous to parse.** The parser
+  is handed JSON and HTML from a site we do not control. Remote code execution, path
   traversal via a crafted URL or filename, or a catastrophic regex backtrack
   that a page can trigger deliberately all count.
 - **Injection into a page we drive.** Values fetched from an API are
@@ -53,10 +53,11 @@ In scope:
 
 Not because these do not matter, but because they belong somewhere else:
 
-- **Bypassing Binance's bot protection.** This scraper drives an ordinary
-  browser and passes challenges the way a browser does. Anything about how
-  AWS WAF behaves is not a vulnerability in this repository.
-- **The scraper stopped working.** Binance changing its API is expected —
+- **Tractor Supply's bot protection.** This scraper drives an ordinary
+  browser and calls the site's endpoints the way its own front end does.
+  Anything about how Akamai decides is not a vulnerability in this
+  repository.
+- **The scraper stopped working.** The site changing its endpoint is expected —
   file it as a normal issue, there is a template for exactly that.
 - **Anything about 2Captcha's services** — the solver API, the Scraping Browser
   API, proxies, fingerprints, billing, quotas. This repository is only a client
@@ -99,9 +100,8 @@ it is recoverable. In order:
 Three places leak credentials that people do not expect, because unlike our own
 log lines they are **not** masked:
 
-- **raw HTML dumps** (`--dump-html`, and the automatic dump on a zero-product
-  run) — these can contain session cookies
-- **the Scraper API's `x-debug` response header**
+- **raw response dumps** (`--dump-html`, and the automatic `_debug.html` on a
+  refused page) — a captured page echoes cookie values and a session id
 - **your shell history**, if you passed a key on the command line
 
 Use `.env` for credentials. It is in `.gitignore`, and `python3 env_config.py`

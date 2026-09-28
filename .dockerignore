@@ -1,6 +1,7 @@
 .git/
 .github/
 .env
+.env*
 *.log
 *.key
 secrets*
@@ -11,8 +12,11 @@ __pycache__/
 .venv/
 venv/
 env/
-binance_rows.*
+tractorsupply_products.*
 *_debug.html
 *_debug.png
 live_results/
 live_results.zip
+live/
+captures/
+fixtures_generated.json

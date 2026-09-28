@@ -1,14 +1,14 @@
-# Builds the Playwright engine (the one the README recommends) into a
-# container with its own Chromium — for a CI canary run or a scheduled job,
-# not required for local development (`pip install` directly is simpler there).
+# Builds the Playwright engine into a container — for a scheduled job, not
+# required for local development (`pip install` directly is simpler there).
 #
-#   docker build -t binance-scraper .
-#   docker run --rm -v "$PWD/out:/out" binance-scraper \
-#     --mode copytrading \
-#     --pages 3 --out /out/leads
+#   docker build -t tractorsupply-scraper .
+#   docker run --rm -v "$PWD/out:/out" --env-file .env tractorsupply-scraper \
+#     --category poultry-feed-treats --pages 3 --out /out/poultry
 #
-# Pass --proxy/--twocaptcha-key the same way as running locally, or mount a
-# .env at /app/.env — nothing here bakes in a credential.
+# On this site the one client that was served is the Scraping Browser API
+# (README), so the image's own Chromium is there for parity; a real run
+# passes TRACTORSUPPLY_CDP_ENDPOINT through the environment. Nothing here
+# bakes in a credential.
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -25,7 +25,7 @@ RUN pip install --no-cache-dir -r requirements.txt -r requirements-playwright.tx
 # proxy_pool.py, which the engine imports at module level, so the image died
 # with ModuleNotFoundError on every invocation INCLUDING `--help` — a broken
 # container that nothing in the repo would have noticed.
-COPY captcha_solver.py env_config.py fingerprint_client.py output_writer.py \
+COPY env_config.py fingerprint_client.py output_writer.py \
      page_flow.py playwright_scraper.py product_parser.py proxy_pool.py \
      diff_runs.py ./
 

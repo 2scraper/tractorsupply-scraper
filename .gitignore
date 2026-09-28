@@ -7,17 +7,16 @@
 *.json
 *.csv
 !package.json
-# Committed on purpose: a real 5-row excerpt of a real run, so a reader can see
-# the exact output shape without installing anything.
+# The search endpoint answers in newline-delimited JSON, and --dump-html
+# writes it as it came: `*.json` does not cover a `.ndjson` dump.
+*.ndjson
+# Committed on purpose: a real 12-row run, so a reader can see the exact
+# output shape without installing anything.
 !sample_output.json
 !sample_output.csv
-!sample_output_copytrading.json
-!sample_output_copytrading.csv
-!sample_output_announcements.json
-!sample_output_announcements.csv
 !fixtures_generated.json
-binance_rows.*
-binance_rows_*.*
+tractorsupply_products.*
+tractorsupply_products_*.*
 
 # --- the live-test harness's working directory ---------------------------
 live_results/
@@ -27,7 +26,7 @@ live_results.zip
 # listed, and a `--dump-html` of a 3-page run wrote `canary_dump.json.page3`,
 # which `*.json` does not cover. It sat untracked and NOT ignored, one
 # `git add -A` from a commit, until the credential scan flagged the 32-hex
-# announcement codes inside it.
+# ids inside it (in binance-scraper, where this was measured).
 live/
 out/
 output/
@@ -83,9 +82,8 @@ env/
 .vscode/
 
 # --- never, under any circumstances --------------------------------------
-# The scrapers mask user:pass in their own logs, but raw HTML dumps and the
-# Scraper API's x-debug header are NOT masked, and a key pasted into a shell
-# history file is not masked either.
+# The scrapers mask user:pass in their own logs, but raw response dumps are
+# NOT masked, and a key pasted into a shell history file is not masked either.
 *.log
 .env
 *.key

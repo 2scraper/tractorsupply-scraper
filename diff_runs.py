@@ -2,38 +2,39 @@
 """
 diff_runs.py
 ------------
-Diff two binance-scraper JSON outputs of the same mode by `sku`.
+Diff two tractorsupply-scraper JSON outputs of the same listing by `sku`.
 
     added      in the new run, not the old one
     removed    in the old run, not the new one
     changed    in both, with a tracked column that differs
 
-What each means depends on the mode, and it is worth being exact:
+What each means, exactly:
 
-    p2p            an advert that appeared or went away, or whose price,
-                   limits or remaining quantity moved. P2P moves by the
-                   minute, so a diff an hour apart is mostly `changed`.
-    copytrading    a portfolio entering or leaving the slice the run fetched,
-                   or its figures moving. `removed` does NOT mean closed: a
-                   run fetches the first N of ~8,900 portfolios under one
-                   ordering, and a portfolio can fall below the cut.
-    announcements  a new article (`added`), or one the catalogue dropped.
+    added / removed   a product entering or leaving the slice the run
+                      fetched. `removed` does NOT mean discontinued: a run of
+                      N pages holds the first N pages of the listing under
+                      one ordering, and a product can fall below the cut.
+                      Only a run that fetched the whole listing (pages ==
+                      pages_available in both sidecars) can say a product
+                      went away.
+    changed           the price, the list price, stock, a badge or a
+                      promotion moved.
 
 **The tracked columns are DERIVED from the row class, not listed by hand.**
 A hand-written list here is how a sibling family of repos came to report
 "0 changed" on real changes for weeks: the list had been copied from a repo
 whose rows had different columns, and every field it named was absent from
 both sides, so every comparison was None == None. So TRACKED_FIELDS is
-"every column of the mode's row class, minus the ones that describe the run
-rather than the thing" (UNTRACKED_FIELDS), and a check asserts it is never
-empty.
+"every column of the row class, minus the ones that describe the run rather
+than the product" (UNTRACKED_FIELDS), and a check asserts it is never empty.
 
 Refused, with --force as the escape hatch:
   * runs that are not both `complete` — a short run's unfetched pages read as
     `removed`;
-  * runs of different modes — their rows share no columns worth comparing;
-  * runs of different QUERIES (asset/fiat/side, period/ordering, catalogue),
-    from the sidecar — every line would describe the query change.
+  * runs of different modes;
+  * runs of different QUERIES — a different listing, ordering or page size,
+    and above all a different STORE SET: prices are set per store, so two
+    runs priced at two stores diff as price changes that no store made.
 """
 
 import argparse
@@ -46,12 +47,13 @@ from typing import Dict, List, Optional, Tuple
 from output_writer import ROW_CLASS_BY_MODE, UNIQUE_BY_SKU_MODES
 
 # Columns that describe the RUN, or that restate the key, rather than the
-# advert/portfolio/article. `page` and `position` are here because a live
-# listing reorders itself between runs: a portfolio moving from position 4
-# to 5 is the ordering, not the portfolio.
+# product. `page` and `position` are here because a listing ordered by
+# popularity reorders itself between runs: a product moving from position 4
+# to 5 is the ordering, not the product. `store_id` and `zip_code` are in the
+# sidecar's query, where a change refuses the whole comparison instead.
 UNTRACKED_FIELDS = frozenset({
     "source", "scraped_at", "sku", "page", "position", "mode", "sort",
-    "data_source", "url",
+    "url", "price_source", "store_id", "zip_code",
 })
 
 
@@ -109,16 +111,11 @@ def diff_products(old: List[dict], new: List[dict],
 
 
 def _headline(row: dict) -> str:
-    """The one detail per row that says what it is, by mode."""
-    mode = row.get("mode")
-    if mode == "p2p":
-        return "%s %s/%s @ %s" % (row.get("advertiser_side"), row.get("asset"),
-                                  row.get("fiat"), row.get("price"))
-    if mode == "copytrading":
-        return "ROI %s%% (%s)" % (row.get("roi_pct"), row.get("time_range"))
-    if mode == "announcements":
-        return str(row.get("released_at"))
-    return ""
+    """The one detail per row that says what it is."""
+    price = row.get("price")
+    hi = row.get("price_max")
+    shown = "%s-%s" % (price, hi) if hi not in (None, price) else str(price)
+    return "%s %s at store %s" % (shown, row.get("currency") or "", row.get("store_id"))
 
 
 def _print_summary(result: dict) -> None:
@@ -178,10 +175,10 @@ def _check_comparable(args) -> bool:
     if len(queries) == 2 and queries["--old"] != queries["--new"]:
         problems.append(
             f"the two runs asked different questions ({queries['--old']} vs "
-            f"{queries['--new']}). On copy-trading the ordering decides WHICH "
-            f"portfolios a capped run holds at all; on P2P the side and "
-            f"payment filter decide which adverts exist. Every line would "
-            f"describe the query rather than the site.")
+            f"{queries['--new']}). A different ordering decides WHICH "
+            f"products a capped run holds, and a different store set prices "
+            f"the same products differently. Every line would describe the "
+            f"query rather than the site.")
     if not problems:
         return True
     print("[!] Refusing to diff these two runs:")
@@ -193,7 +190,7 @@ def _check_comparable(args) -> bool:
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Diff two binance-scraper JSON outputs by sku.")
+        description="Diff two tractorsupply-scraper JSON outputs by sku.")
     p.add_argument("--old", required=True, help="Earlier run's JSON output.")
     p.add_argument("--new", required=True, help="Later run's JSON output.")
     p.add_argument("--out", default=None,

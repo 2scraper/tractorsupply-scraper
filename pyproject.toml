@@ -3,9 +3,9 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "binance-scraper"
+name = "tractorsupply-scraper"
 version = "0.1.0"
-description = "binance.com scraper: P2P adverts, Futures copy-trading lead portfolios and announcements, from the site's own JSON endpoints (Playwright, Selenium or pyppeteer)."
+description = "tractorsupply.com listing scraper: categories and searches priced per store, with list prices, unit prices, ratings and stock, from the site's own search endpoint (Playwright, Selenium or pyppeteer)."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
@@ -16,12 +16,11 @@ authors = [{ name = "2Captcha" }]
 # mirrored in the other by hand. CI's byte-compile + smoke_test.py steps only
 # install requirements.txt, so a drift here would go unnoticed there too.
 dependencies = [
-    "beautifulsoup4>=4.12.0",
     "requests>=2.31.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/2scraper/binance-scraper"
+Homepage = "https://github.com/2scraper/tractorsupply-scraper"
 
 # Mirrors requirements-playwright.txt / requirements-puppeteer.txt /
 # requirements-selenium.txt. Install exactly one — see those files for why:
@@ -42,7 +41,6 @@ dev = ["pytest>=7.0"]
 # invoked as a script (see CONTRIBUTING.md), not a module an installed
 # dependency would import.
 py-modules = [
-    "captcha_solver",
     "diff_runs",
     "env_config",
     "fingerprint_client",
@@ -52,7 +50,6 @@ py-modules = [
     "product_parser",
     "proxy_pool",
     "puppeteer_scraper",
-    "scraper_api_client",
     "selenium_scraper",
 ]
 license-files = ["LICENSE"]
@@ -61,6 +58,6 @@ license-files = ["LICENSE"]
 # smoke_test.py is a self-contained runner, not a pytest suite (see
 # CONTRIBUTING.md for why) — tests/test_smoke.py wraps it as a single pytest
 # test so `pytest` works as an entry point without maintaining two copies of
-# the same ~339 checks. Scoped to tests/ so pytest doesn't also try, and fail,
+# the same checks. Scoped to tests/ so pytest doesn't also try, and fail,
 # to collect the engine scripts and product_parser.py as test modules.
 testpaths = ["tests"]

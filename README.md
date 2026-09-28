@@ -1,50 +1,69 @@
-# binance-scraper
+# tractorsupply-scraper
 
-[![release](https://img.shields.io/github/v/release/2scraper/binance-scraper)](https://github.com/2scraper/binance-scraper/releases)
-[![tests](https://github.com/2scraper/binance-scraper/actions/workflows/tests.yml/badge.svg)](https://github.com/2scraper/binance-scraper/actions/workflows/tests.yml)
-[![canary](https://github.com/2scraper/binance-scraper/actions/workflows/canary.yml/badge.svg)](https://github.com/2scraper/binance-scraper/actions/workflows/canary.yml)
+[![release](https://img.shields.io/github/v/release/2scraper/tractorsupply-scraper)](https://github.com/2scraper/tractorsupply-scraper/releases)
+[![tests](https://github.com/2scraper/tractorsupply-scraper/actions/workflows/tests.yml/badge.svg)](https://github.com/2scraper/tractorsupply-scraper/actions/workflows/tests.yml)
+[![canary](https://github.com/2scraper/tractorsupply-scraper/actions/workflows/canary.yml/badge.svg)](https://github.com/2scraper/tractorsupply-scraper/actions/workflows/canary.yml)
 ![python](https://img.shields.io/badge/python-3.9%20%7C%203.12-blue)
 [![licence](https://img.shields.io/badge/licence-MIT-green)](LICENSE)
 ![engines](https://img.shields.io/badge/engines-playwright%20%7C%20selenium%20%7C%20pyppeteer-lightgrey)
-![runs without an account](https://img.shields.io/badge/all%20three%20modes-no%20account%20needed-brightgreen)
+![needs](https://img.shields.io/badge/needs-Scraping%20Browser%20API%20(US)-orange)
 
-Scrapes three things from [binance.com](https://www.binance.com) that its
-pages show every visitor, into JSON and CSV:
+Scrapes [tractorsupply.com](https://www.tractorsupply.com) listings — a
+category, a whole department, or a keyword search — into JSON and CSV, with
+the prices **of a specific store**:
 
-| `--mode` | what | one row per | per page |
-|---|---|---|---|
-| `p2p` (default) | the **P2P order book** for an asset/fiat pair: price, limits, payment methods, the advertiser's 30-day completion and feedback | advert | 20 adverts |
-| `copytrading` | **Futures copy-trading lead portfolios**: ROI, PnL, max drawdown, win rate, AUM, copier PnL, copiers and seats, badge | portfolio | 30 portfolios |
-| `announcements` | an **announcement catalogue**: new listings, delistings, news, maintenance, API updates, airdrops | article | 50 announcements |
+| `--mode` | what | example |
+|---|---|---|
+| `category` | a category or a whole department | `--category poultry-feed-treats`, `--url …/tsc/category/pet` |
+| `search` | a keyword search, in any of the site's eight orderings | `--search "dog food" --sort price-asc` |
 
-Every run writes a `<out>.meta.json` beside the output with the site's own
-total, so a file can say "90 of 8,920" rather than only "90".
-
-Binance's official API is for market data and your own account. Its
-announcement feed is an [API-key-authenticated WebSocket](https://developers.binance.com/docs/cms/general-info).
-This repo reads the public lists the site's own pages are built from.
+One row per product, 35 columns: price and price range, list price and the
+discount computed from it, unit price ("$0.33 per lb"), minimum-advertised-
+price handling, rating and review count, stock, ship and pickup availability
+at the chosen store, brand, model number, badges, the first promotion, and
+the number of variants. Every run writes a `<out>.meta.json` beside the
+output with the site's own total, so a file says "144 of 272" rather than
+only "144", and with the stores the prices are for.
 
 ---
 
 ## Start with the part most scrapers bury
 
-**You need no key, no proxy and no account for any of the three modes.**
+**On this site you need the 2Captcha Scraping Browser API, with a US exit.
+Nothing else was served.**
 
-Measured 2026-09-24 from a datacentre VPS (netcup, Nuremberg):
+Measured 2026-09-28. Akamai Bot Manager fronts the whole site:
 
-| what was asked | answer |
+| client | answer |
 |---|---|
-| any HTML page on binance.com, plain curl | HTTP 202, empty body, `x-amzn-waf-action: challenge` (AWS WAF) |
-| an announcement page in real Chromium, headless and headful | "Human Verification": AWS WAF's CAPTCHA |
-| the three JSON endpoints the site's own front end calls, plain curl | **HTTP 200 and complete JSON** |
+| plain curl, any User-Agent, datacentre (Hetzner, Helsinki) | HTTP 403 "Access Denied" — on every URL, `robots.txt` included |
+| local Chromium, headless and headful, same address | 403 |
+| US residential proxy (2Captcha, Comcast exit), curl | connection reset |
+| US residential proxy, headless Chromium | `ERR_HTTP2_PROTOCOL_ERROR` |
+| US residential proxy, headful Chromium | homepage 200; every `/tsc/` navigation and `fetch()` 403 (13 of 13) |
+| 2Captcha Scraper API (its own exits) | target HTTP 403 on every URL tried, homepage included (4 of 4) |
+| **Scraping Browser, `country-us`** | **homepage 200; every request after it 200** |
 
-So the pages are gated and the data is not. Each engine lands a browser on
-one of those endpoints and issues every page as a same-origin `fetch()`, so
-no page is ever rendered. A full USDT/EUR buy-side order book, 10 pages,
-came back as **196 of 196 adverts** in 13 seconds with nothing configured.
+Even through the Scraping Browser, *navigating* to a category page is
+refused. What is let through is what the site's own front end does: load the
+homepage, then call the site's endpoints with `fetch()`. So that is exactly
+what every engine here does — one navigation, then every request as a
+same-origin `fetch()` from that page.
 
-What the paid products buy here is insurance and scale, and the section
-below says exactly which one does what.
+It is also where the data is. A category page's HTML carries the category's
+id and **no products**: the grid is painted in the browser from a search
+endpoint (`/gtwy/SiteSearch/catalogSearch`, newline-delimited JSON). This
+repo reads that endpoint directly.
+
+Live, through one `country-us` profile, all complete:
+
+| engine | listing | rows | time |
+|---|---|---|---|
+| Playwright | category `poultry-feed-treats`, 3 pages | 144 of 272 | 11 s |
+| pyppeteer | search "dog food", price ascending, 3 pages | 144 of 1,076 | 8 s |
+| Playwright | search "dog food", ZIP 75001, 2 pages of 200 | 400 of 1,076 | — |
+| Playwright | department `pet`, 2 pages | 96 of 14,678 | — |
+| Selenium | local Chrome | exit 3, `blocked_akamai` (see Engines) | — |
 
 ---
 
@@ -53,220 +72,192 @@ below says exactly which one does what.
 ```bash
 python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt -r requirements-playwright.txt
-./venv/bin/playwright install chromium
 ```
 
-Install **one** engine per virtualenv: the three libraries pin versions of
-their dependencies that cannot all be satisfied at once.
+No `playwright install` is needed over `--cdp-endpoint`: the browser is
+remote. Install **one** engine per virtualenv; the three libraries pin
+versions of their dependencies that cannot all be satisfied at once.
+
+Put the endpoint in `.env` (see `.env.example`), never on a command line:
+
+```bash
+cp .env.example .env
+# TRACTORSUPPLY_CDP_ENDPOINT=ws://{login}-zone-scraping_browser-country-us-pid-{profileId}:{password}@cb.2captcha.com:9222
+python3 env_config.py      # what was picked up, without printing secrets
+```
 
 ## Run
 
 ```bash
-# P2P: adverts you could BUY USDT from, paying EUR, every page
-./venv/bin/python playwright_scraper.py --asset USDT --fiat EUR --side buy --pages 50
+# a category, three pages of 48
+./venv/bin/python playwright_scraper.py --category poultry-feed-treats --pages 3
 
-# ...only those taking SEPA Instant (the site's identifier, checked before the search)
-./venv/bin/python playwright_scraper.py --fiat EUR --pay-type SEPAinstant
+# a whole department
+./venv/bin/python playwright_scraper.py --url https://www.tractorsupply.com/tsc/category/pet --pages 5
 
-# copy-trading: the top 150 portfolios by 7-day PnL
-./venv/bin/python playwright_scraper.py --mode copytrading --time-range 7D --sort-by pnl --pages 5
+# a search, cheapest first, priced at the stores near Dallas
+./venv/bin/python playwright_scraper.py --search "dog food" --sort price-asc --zip 75001
 
-# announcements: the delisting catalogue
-./venv/bin/python playwright_scraper.py --mode announcements --category delisting --pages 2
-
-# or read the query from a page's address
-./venv/bin/python playwright_scraper.py --url "https://p2p.binance.com/en/trade/sell/BTC?fiat=TRY"
+# fewer requests: up to 200 a page
+./venv/bin/python playwright_scraper.py --category dog-food --page-size 200 --pages 10
 ```
 
 `--pages` is planned against the total the site states on page 1, so asking
-for more pages than exist fetches all of them and stops.
-[sample_output.json](sample_output.json),
-[sample_output_copytrading.json](sample_output_copytrading.json) and
-[sample_output_announcements.json](sample_output_announcements.json) are five
-rows of each mode, cut from real runs. P2P rows have 29 columns,
-copy-trading rows 26 columns and announcement rows 12 columns.
+for more pages than exist fetches all of them. `--sort` takes the site's own
+orderings: `popular` (default), `rating`, `name-asc`, `name-desc`,
+`price-asc`, `price-desc`, `recency`, `new`.
+
+Outputs `tractorsupply_products.json`, `.csv` and `.meta.json`
+(`--out` changes the prefix). A real one is committed as
+[`sample_output.json`](sample_output.json) / [`.csv`](sample_output.csv).
 
 ---
 
-## Five things about Binance that will look like bugs
+## Six things about Tractor Supply that will look like bugs
 
-### 1. A buy query returns adverts marked "sell"
+### 1. Prices are per store
 
-An advert carries the **maker's** side. Asking for adverts you can buy from
-returns adverts whose own `tradeType` is `SELL`: 20 of 20 on the captured
-page, and 20 of 20 the other way round on a sell query. Every row keeps
-both: `side` is what you asked for, `advertiser_side` is what the advert
-says.
+Every request names the stores near a ZIP code, and the site prices at
+them. On one 37-product category, a Georgia store set and a Texas one agreed
+on 36 prices and differed on one (1,799.99 against 1,899.99). So a run's
+store is part of its question: `--zip` picks it (default **37027**,
+Brentwood TN, where the company is headquartered — a fixed choice, so two
+runs from two exits price the same catalogue at the same store), and
+`store_id` / `zip_code` are in every row and the sidecar. `diff_runs.py`
+refuses to compare two runs priced at different stores.
 
-### 2. The API accepts wrong values and answers with something plausible
+### 2. `price` is the low end of a range
 
-Measured on 2026-09-24:
+A product with sizes has one row and several prices. The endpoint's own
+field called `price` is one variant's, and on most of the 53 of 249 products
+where it differed from the low end it was the **highest**. So `price` is the
+low end, `price_max` the high end, and they are equal on a single-SKU
+product. `original_price` is filled only where both it and the price are
+single values: on a range, a "was" figure does not belong to the price
+beside it.
 
-| sent | answer |
-|---|---|
-| copy-trading `dataType` = a made-up key | HTTP 200, a full list, under some other ordering |
-| copy-trading `pageSize` = 50 or 100 | HTTP 200 with **30** rows: silently capped |
-| P2P `payTypes` = an identifier with a typo | HTTP 200, `total: 0`, on a market full of adverts |
+### 3. `in_stock` is empty on multi-variant products
 
-Each of those turns a typo into a run that looks healthy, so every
-parameter is allowlisted before anything is sent, and `--pay-type` is
-checked against the site's own list of payment methods for the fiat.
-`--pay-type "SEPA Instant"` (the name the page shows) is refused with
-"did you mean SEPAinstant?".
+The site's inventory stream lists no multi-variant product at all — 0 of
+108 measured — so their `in_stock`, `ship_available` and `pickup_available`
+are null rather than guessed. `variant_count` says which rows those are.
+`sold_via` ("Online Only", "In Stores Only") is the sales channel the site
+states, which is not stock.
 
-Win rate is **not** offered as a `--sort-by`: the endpoint gave a nonsense
-key the same answer as `WIN_RATE`, so there is no evidence it sorts by it.
+### 4. A search the site cannot match returns products anyway
 
-### 3. `--sort-by` decides which portfolios are in the file
+"qzxqzxvvv" came back as 100 pairs of Wrangler jeans, and nothing in the
+response says so. The run measures how many rows of page 1 mention the
+query, warns below 20%, and records the share as `query_relevance` in the
+sidecar.
 
-Copy-trading lists about 8,900 portfolios. A 5-page run holds the first 150
-**by the ordering you chose**, so the top 150 by ROI and the top 150 by AUM
-are different samples, not the same one reordered. The ordering is a
-column (`sort`), and `diff_runs.py` refuses to compare runs that differ in
-it. `--sort-by sharpe` also filters: it returned 5,568 portfolios against
-8,920 under every other key, because a portfolio with no Sharpe ratio is
-left out. And `--sort-by mdd` with the default `desc` puts **zero** drawdown
-first; that ordering is the site's.
+### 5. A department's visible id returns nothing
 
-### 4. The listings move while you read them
+`/tsc/category/farm-ranch` names itself `1001811`, and the search endpoint
+answers that id with zero results. The id it filters on (26654) is the
+parent each of the department's categories names, and that is what the run
+uses. A department listing is every product in it: Pet was 14,678.
 
-P2P's total went from 186 to 187 between two requests a minute apart. A
-multi-page run of a live listing can see one row twice (the dedupe drops it
-and the log says so) or miss one that moved up across a page boundary after
-its page was fetched. No scraper can see the second.
+### 6. A category that does not exist is HTTP 500
 
-### 5. A refused parameter is not a block
-
-The announcements endpoint takes a page size from a fixed set, and answers
-anything else (12, 25, 30, 100) with **HTTP 400 and an empty body**. Classify
-that as a block and you go shopping for a proxy to fix a typo. Here it is
-`rejected`: the run stops at once with the site's own complaint, nothing is
-retried, and the exit code is 5 ("the data never arrived"), not 3.
+Not 404: an unknown slug is answered with the site's own error page under a
+server-error status. The run recognises the page, stops with exit 2 and says
+there is no such category, instead of retrying a "fault".
 
 ---
 
 ## Engines
 
-| | |
+| engine | status on this site |
 |---|---|
-| `playwright_scraper.py` | **Primary.** Authenticates a proxy and a remote CDP endpoint. |
-| `puppeteer_scraper.py` | pyppeteer is effectively unmaintained; here for parity. Authenticates a proxy and a CDP endpoint. `--chromium-path` points it at another browser if its own will not start. |
-| `selenium_scraper.py` | Drives the Chrome you already have. **Cannot authenticate a proxy or a remote CDP endpoint** (`debuggerAddress` is a bare `host:port`), so it refuses a credentialled `--cdp-endpoint` with exit 2. None of the modes needs either. |
-| `scraper_api_client.py` | No local browser: the 2Captcha Scraper API fetches the page. Reads `--mode announcements` only, the one endpoint with a URL. The P2P and copy-trading endpoints answer POST, and **this repo does not implement a POST through the Scraper API**. Measured: 2 pages, 100 rows, $0.0005 a page. |
+| `playwright_scraper.py` | primary. Served over `--cdp-endpoint`. |
+| `puppeteer_scraper.py` | served over `--cdp-endpoint`. pyppeteer is effectively unmaintained; here for parity. |
+| `selenium_scraper.py` | **not served.** chromedriver cannot send the credentials a Scraping Browser endpoint carries, so the one client the site served is out of its reach; a local Chrome is refused. It reports that correctly (exit 3), and is kept for parity. |
 
-The fetch loop itself (landing, the WAF, retries, throttling, rotation,
-parsing) is one implementation in `page_flow.py` that all three browser
-engines drive, so they cannot disagree about a page. Each was run live on
-2026-09-24 through the same seven scenarios (P2P buy and sell, copy-trading,
-announcements, `--concurrency`, a refused `--pay-type`, `--url`) with the
-same results.
+All three share one fetch loop (`page_flow.run_pages`), so they agree on
+exit codes, run status and every retry decision by construction. Each
+engine is only driver plumbing and one piece of JavaScript, the `fetch()`,
+written in its driver's dialect.
+
+`--concurrency N` runs N workers, each with its own browser and exit; it is
+ignored with `--cdp-endpoint`, because a Scraping Browser profile takes one
+live connection. Use several `pid`s, one run each.
 
 ---
 
 ## What the 2Captcha products buy, and when
 
-One key, four separately-billed products ([2captcha.com](https://2captcha.com)):
-
-* **Captcha solving**: AWS WAF's CAPTCHA, with the AmazonTask and
-  AmazonTaskProxyless task types
-  ([docs](https://2captcha.com/api-docs/amazon-aws-waf-captcha)). None of
-  the data endpoints showed that CAPTCHA to any engine, so a normal run buys
-  nothing. The path exists for the day the WAF moves in front of them. It
-  was run live on a page that IS gated, a binance.com announcement page:
-
-  | | |
-  |---|---|
-  | one solve | 23-40 s, $0.00145, page served |
-  | the same session afterwards | three more gated pages, no further solve |
-  | control: the same page, no solve | 0 of 5 cleared by themselves in 25 s |
-
-  The part that matters if you port this: the value that clears the WAF is
-  the solution's `existing_token`, set as the `aws-waf-token` cookie on the
-  **registrable** domain (`.binance.com`). A `captcha_voucher` set as the
-  cookie on the page's own host left the page on "Human Verification".
-  Selenium's Chrome was not shown the CAPTCHA at all on those pages (3 of 3),
-  so its copy of the solve path has not been exercised live.
-* **Proxies** (`--proxy`, `--proxy-file`): volume from more than one
-  address, and an exit in a country Binance serves. Binance's terms exclude
-  some jurisdictions, the United States among them.
-* **The Scraping Browser API** (`--cdp-endpoint`): a remote browser you do
-  not run, with a chosen exit country. One live connection per `pid`, so
-  `--concurrency` is refused with it. Run live on 2026-09-24 through a
-  `country-de` profile: Playwright and pyppeteer, all three modes, 8 of 8
-  runs complete, back to back. Two details measured on the way: a profile
-  stays locked for 1.6-1.9 s after a clean disconnect, so the engines retry
-  a `profile_locked` connection rather than failing on it; and an expired
-  profile answers HTTP 401, which the engines report as exit 5 naming the
-  expiry. Selenium refuses a credentialled endpoint with exit 2.
-* **Fingerprints** (`--fingerprint`): a consistent device identity for a
-  local browser. Ignored with `--cdp-endpoint`, which brings its own.
-
-Nothing here integrates a competitor.
+* **Scraping Browser API** — the one client this site served, from a US
+  exit. `country-us`; a profile's credentials last about a day.
+* **Proxies** — supported (`--proxy`, `--proxy-file`, rotation and
+  per-exit retries), but on 2026-09-28 a US residential exit was **not**
+  enough for local Chromium (the table above). Measure before paying for
+  volume.
+* **Fingerprints** — supported (`--fingerprint`), for local browsers. Not
+  measured to change Akamai's answer here.
+* **Captcha solving** — this repo does not implement a solver, and the
+  family's `--captcha-api`, `--solve-captcha` and `--min-score` flags are
+  absent on purpose: none of the refusals the site served (19 captured)
+  carried a captcha widget, only Akamai's plain Access Denied. A flag that
+  configures nothing looks configurable and is not.
+* **Scraper API** — this repo does not implement a Scraper API path: its
+  own exits were refused on every URL tried, homepage included.
 
 ---
 
 ## Exit codes
 
-| | |
+| code | meaning |
 |---|---|
-| 0 | rows written |
-| 1 | crash |
-| 2 | bad usage, including a `--pay-type` the site does not offer |
-| 3 | blocked: AWS WAF, a 403 or a 451, distinct from an empty listing |
-| 4 | zero rows: the listing has nothing in it |
-| 5 | the data never arrived: a timeout, a dead proxy, a refused parameter, a remote API error |
-| 6 | partial: some pages came back and some did not |
+| 0 | ok |
+| 1 | crash (a bug — please report it) |
+| 2 | bad usage, or a listing the site does not have: an unknown category, a ZIP with no store |
+| 3 | blocked: Akamai refused the client (`stop_reason: blocked_akamai`) |
+| 4 | the listing is genuinely empty; nothing is written, so an earlier good file survives |
+| 5 | the data never arrived: a timeout, a remote-browser error (401 = expired endpoint), or the endpoint refused the parameters and said why |
+| 6 | partial: some pages came back, a later one did not; the sidecar lists which |
 
-**A run that finds nothing writes nothing**, so a failure never replaces last
-night's good output with `[]`. `--allow-empty` is the opt-out.
-
-`diff_runs.py --old a.json --new b.json` compares two runs of the same mode
-and query by `sku`: new and vanished adverts, portfolios or articles, and
-every tracked column that changed.
-
----
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for each.
 
 ## Configuration
 
-Credentials live in `.env` next to the scripts, never on a command line.
-Copy [`.env.example`](.env.example) and fill in what you use;
-`python3 env_config.py` prints what was picked up **without printing
-secrets**. Precedence: explicit flag → exported environment variable →
-`.env` → default.
+Precedence, highest first: a flag you typed → an exported environment
+variable → `.env` → the default. `.env` holds `TWOCAPTCHA_KEY`,
+`TRACTORSUPPLY_CDP_ENDPOINT`, `TRACTORSUPPLY_PROXY` and `TRACTORSUPPLY_URL`
+(a default listing, which a typed `--category` or `--search` overrides).
+`--page-size` is capped at 200 because the endpoint refuses more with
+HTTP 400.
 
----
+## Comparing two runs
+
+```bash
+python3 diff_runs.py --old monday.json --new tuesday.json
+```
+
+Added, removed and changed products by `sku`. It refuses runs that are not
+both complete, and runs of different listings, orderings or store sets, since
+every line would then describe the question rather than the site.
+`removed` means "no longer in the slice fetched", not "discontinued", unless
+both runs fetched every page.
 
 ## Tests
 
 ```bash
-python3 smoke_test.py          # offline, no network, no engine needed
-python3 smoke_test.py -v       # every check as it passes
-pytest                          # the same suite, one test
+python3 smoke_test.py
 ```
 
-The fixtures are real API responses, trimmed and scrubbed by
-`make_fixtures.py`, which proves each one parses identically to its
-original. The suite also drives the shared fetch loop end to end with a fake
-browser: a full listing, a refused parameter, a 403, an empty listing, a
-throttle, a WAF challenge mid-run and a bad `--pay-type`.
-
-The [canary](.github/workflows/canary.yml) runs a real 3-page scrape of each
-mode daily **with no secrets**, which is what keeps "no account needed"
-honest. Its first dispatch (2026-09-24, a GitHub-hosted runner, no proxy)
-came back complete in all three modes: 60 of 238 adverts, 90 of 8,917
-portfolios, 150 of 2,269 announcements.
-
----
+Offline, about a second, no browser and no key. The fixtures are real
+responses captured 2026-09-28, cut down by `make_fixtures.py`, which proves
+each one parses identically to its original. CI runs the suite on Python 3.9
+and 3.12, once more per engine in its own virtualenv, and builds the Docker
+image. The canary (`canary.yml`) runs three real pages of each mode; it is
+dispatch-only and skips without a `TRACTORSUPPLY_CDP_ENDPOINT` secret,
+because a GitHub runner is one of the clients the site refuses and an
+endpoint's credentials do not outlive a day.
 
 ## Legal
 
-This reads **public data**: the P2P advert list, the public copy-trading
-leaderboard and the announcement catalogues, as the site's own pages fetch
-them for an anonymous visitor. It places no order, opens no trade, copies no
-portfolio and reads nothing behind a login.
-
-Rate limits, terms of service and the legality of scraping in your
-jurisdiction are your responsibility as the operator. `--delay` defaults to
-1 second between pages.
-
-MIT licensed. Not affiliated with or endorsed by Binance.
+This reads public catalogue pages the way the site's own front end does, as
+an anonymous visitor. Whether and how you may scrape a site depends on your
+jurisdiction and its terms; that is your responsibility as the operator.
+Nothing here logs in, adds to a cart or places an order.

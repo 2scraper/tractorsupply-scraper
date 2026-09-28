@@ -1,5 +1,5 @@
 name: Site changed / API broke
-description: binance.com changed an endpoint and the parser no longer matches.
+description: tractorsupply.com changed its search endpoint or pages and the parser no longer matches.
 labels: ["site-change"]
 body:
   - type: markdown
@@ -7,24 +7,26 @@ body:
       value: |
         This is the most common way a scraper stops working, and it is worth
         its own report because the fix is different from a code bug:
-        something on binance.com moved.
+        something on tractorsupply.com moved.
 
-        Useful to know before filing: this repo reads NO HTML. Every row comes
-        from one of three JSON endpoints the site's own front end calls
-        (`product_parser.py` lists them), so a break is almost always a
-        renamed field, a new required parameter, or an endpoint going behind
-        the site's AWS WAF.
+        Useful to know before filing: every row comes from ONE endpoint, the
+        search the site's own listing page calls
+        (`/gtwy/SiteSearch/catalogSearch`, newline-delimited JSON), and a
+        category page is fetched only for its id. So a break is almost always
+        a renamed field, a new required header or parameter, or a category id
+        that moved in the page's `__NEXT_DATA__`.
 
   - type: dropdown
     id: what_broke
     attributes:
       label: What stopped matching
       options:
-        - The run stops with "The endpoint refused this request (code ...)"
+        - The run stops with "The endpoint refused this request (...)"
         - 0 rows on a query that visibly has results on the site
         - A specific column is null or wrong on every row
-        - Every run is blocked by aws-waf, even from a residential exit
+        - Every run is blocked by akamai, even through the Scraping Browser
         - Pagination stops early or repeats rows
+        - "names no id the search endpoint filters on" for a real category
         - Something else
     validations:
       required: true
@@ -33,8 +35,8 @@ body:
     id: query
     attributes:
       label: Mode and query
-      description: The mode and flags (or --url), and the country your exit IP was in.
-      placeholder: "--mode p2p --asset USDT --fiat EUR --side buy (exit IP: DE residential)"
+      description: The flags (or --url), and which client and exit you used.
+      placeholder: "--category poultry-feed-treats --zip 37027 (Scraping Browser, country-us)"
     validations:
       required: true
 
@@ -46,7 +48,8 @@ body:
         Whichever of these you can get. A capture beats a description.
 
         - The response as the parser saw it: re-run with
-          `--dump-html response.json` and paste the first record (it is JSON).
+          `--dump-html response.ndjson` and paste the `catalog` record's
+          first product (it is JSON).
         - For a column problem: the value you got, and the value the site shows.
       render: text
     validations:

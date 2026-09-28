@@ -34,14 +34,11 @@ REPO = Path(__file__).resolve().parent.parent
 ENGINE_LIBS = ("playwright", "pyppeteer", "selenium", "webdriver_manager")
 
 CLIS = ["playwright_scraper.py", "puppeteer_scraper.py", "selenium_scraper.py",
-        "scraper_api_client.py", "fingerprint_client.py", "env_config.py",
+        "fingerprint_client.py", "env_config.py",
         "diff_runs.py"]
 
-# One real run per mode: three row classes, three samples.
-SAMPLE_FILES = ("sample_output.json", "sample_output.csv",
-                "sample_output_copytrading.json", "sample_output_copytrading.csv",
-                "sample_output_announcements.json",
-                "sample_output_announcements.csv")
+# One real run: both modes produce the same row class.
+SAMPLE_FILES = ("sample_output.json", "sample_output.csv")
 
 # Phrases that show up in hand-written or template sample data. The point of
 # committing a sample is that it came from a real run; a placeholder teaches
@@ -85,26 +82,14 @@ CREDENTIAL_ALLOWED = (
 # A 2captcha API key is a 32-character hex string.
 HEX32 = re.compile(r"\b[0-9a-f]{32}\b")
 
-# ONE context, and the reason is worth more than the tuple.
-#
-# Binance names every announcement by a 32-hex `code`, and the row's `url`
-# is built from it: `/en/support/announcement/detail/{code}`, the site's own
-# canonical address (a slug link redirects there). That is a published page
-# address, and the sample output carries fifty of them.
-#
-# The fixtures do NOT need the exemption: `make_fixtures.py` replaces every
-# code with a non-hex placeholder, because the parser only needs a code to
-# exist, not its value. So the only 32-hex strings left in the working tree
-# are inside that exact URL, and a bare 32-hex anywhere else still fails,
-# including in the same file on another line.
-#
-# Two things that look like keys and are not caught, checked rather than
-# assumed: a P2P advertiser id is `s` + 32 hex, which the \b-bounded rule
-# does not match (no word boundary after the `s`); and an avatar URL's hex
-# file name, which the parser never writes.
-SITE_PUBLIC_IDS = (
-    re.compile(r"binance\.com/en/support/announcement/detail/[0-9a-f]{32}\b"),
-)
+# No context at all. Nothing this repo writes is a 32-hex string: the ids
+# it keeps (partNumber, item SKU, store number, category id) are decimal,
+# and make_fixtures.py replaces the hex-shaped values a captured page
+# carries (Akamai and analytics cookies echoed into the markup, session
+# ids) with non-hex placeholders. So a bare 32-hex anywhere in the working
+# tree fails, with no exemption to reason about (CLAUDE.md §24: "before
+# adding an exemption, check whether the value is needed at all").
+SITE_PUBLIC_IDS = ()
 
 def _without_site_ids(line):
     """A line with this site's own published identifiers taken out.
@@ -133,31 +118,13 @@ def _without_site_ids(line):
 HEX32_ALLOWED = ("sha", "hash", "nonce", "example", "md5", "digest",
                  "checksum")
 
-# Files the BARE-HEX rule is not applied to, and the reason it is not.
+# Files the BARE-HEX rule is not applied to.
 #
-# These are verbatim site markup and verbatim run output. This site emits
-# 32-hex identifiers in at least five public contexts — the tail of an ad
-# URL, the `uuid` field, a photo filename, the `location_list.uuids` array,
-# and its own front-end keys — so a bare-hex rule over them produces
-# hundreds of findings that are all correct data. A check that cries wolf 221
-# times is a check somebody switches off, and then it protects nothing.
-#
-# What covers them instead is STRONGER, not weaker, because it looks for the
-# shape of a secret rather than the shape of a hex string:
-#
-#   * every rule below still applies here — a credentialled URL and a
-#     key-shaped field both fail in these files;
-#   * `make_fixtures.py` refuses to write a fixture whose scrub left an
-#     agent's name, a per-seller UUID or a key-shaped value in it;
-#   * `smoke_test.py` re-scans the whole committed fixture corpus for JWTs,
-#     access tokens, API keys, Sentry DSNs, session ids, emails and proxy
-#     credentials, and FAILS if the corpus it scanned was empty.
-# EMPTY, and that is the stricter arrangement rather than an omission.
-#
-# A sibling repo exempts its generated data files from the bare-hex rule
-# wholesale. This one does not need to: the only 32-hex strings it produces
-# are announcement addresses, and SITE_PUBLIC_IDS forgives exactly that
-# context and nothing else, in every file.
+# EMPTY, and that is the stricter arrangement rather than an omission: no
+# file here, generated or not, is exempt. Every fixture passes through
+# make_fixtures.py, which replaces the hex-shaped values a captured
+# response carries before it is written, so the strictest rule can cover
+# the biggest files, the ones nobody reads line by line (CLAUDE.md §24).
 GENERATED_DATA_FILES = ()
 
 # A secret sitting in a field named like one. This is what the bare-hex rule
@@ -211,16 +178,13 @@ HISTORY_DECIDED = {
 # pre-publication step asks for: read it once, decide once, BEFORE the repo
 # goes public, because afterwards only a fresh repository removes it.
 CAPTURES_IN_HISTORY_DECIDED = {
-    # Empty, and checked rather than assumed: the history scan was run over
-    # every blob before this repo was made public.
-    #
-    # Worth knowing what a capture of THIS site carries, so the decision can
-    # be made quickly: API responses only, no page markup. P2P adverts hold
-    # advertisers' public nicknames and ids; copy-trading holds lead
-    # traders' public nicknames and avatar URLs; announcements hold 32-hex
-    # article codes. None of it is ours (no key, no cookie, no proxy
-    # credential), and none of it is a person's private data: these are the
-    # pseudonymous handles the site shows every visitor on the same tile.
+    # Empty. Worth knowing what a capture of THIS site carries, so the
+    # decision can be made quickly if one ever lands: the search endpoint's
+    # NDJSON (products, prices, store numbers: public catalogue data), and
+    # page markup that echoes Akamai's and analytics vendors' cookie values
+    # and a session id into __NEXT_DATA__. The second kind is why no raw
+    # page is committed: make_fixtures.py keeps only the parts the parser
+    # reads.
 }
 
 # Suffixes the HISTORY scan walks. It reads blobs out of git, where a
