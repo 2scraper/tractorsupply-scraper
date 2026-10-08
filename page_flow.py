@@ -37,13 +37,13 @@ from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Tuple
 
 from output_writer import dedupe_by_key, finish_run, SOURCE_DEFAULT
-from product_parser import (DEFAULT_PAGE_SIZE, DEFAULT_SORT, DEFAULT_ZIP,
+from product_parser import (BASE, DEFAULT_PAGE_SIZE, DEFAULT_SORT, DEFAULT_ZIP,
                             MAX_PAGES, ORIGIN_URL, Query, api_error,
                             category_details, category_page_request,
                             detect_document_state, detect_page_state,
                             pages_available, parse_page, parse_store_set,
                             query_from_url, relevance_share, request_for,
-                            store_request, total_results)
+                            search_redirect, store_request, total_results)
 
 log = logging.getLogger("page_flow")
 
@@ -192,6 +192,41 @@ def refusal_advice(state: str) -> str:
             "README's access table.")
 
 
+# Transport errors that are also how Akamai refused a client in testing
+# (README access table, 2026-09-28): headless Chromium through a US
+# residential exit got ERR_HTTP2_PROTOCOL_ERROR on the homepage, and curl
+# through the same exit a reset connection. A third-party audit (2026-10-08)
+# ran without --cdp-endpoint, met the first, and got a bare "Gave up …
+# ERR_HTTP2_PROTOCOL_ERROR" with nothing pointing at the cause.
+#
+# Still exit 5, not 3: a reset is not PROOF of a refusal — a broken network
+# produces the same error — so the run says what it is likely to be rather
+# than claiming a block it cannot show.
+_REFUSAL_SHAPED_TRANSPORT = ("ERR_HTTP2_PROTOCOL_ERROR", "ERR_CONNECTION_RESET",
+                             "ERR_CONNECTION_CLOSED", "ERR_EMPTY_RESPONSE")
+
+
+def transport_hint(error: Optional[str]) -> str:
+    """What a transport failure probably means on this site, or ""."""
+    if any(m in (error or "") for m in _REFUSAL_SHAPED_TRANSPORT):
+        return (" This is also how Akamai refused local Chromium in testing "
+                "(README access table): the one client served was the "
+                "Scraping Browser with a US exit (--cdp-endpoint).")
+    return ""
+
+
+def access_warning(args) -> Optional[str]:
+    """Said once, before anything is fetched, when the run is not using the
+    one client the site served. A warning, not a refusal: an exit or a day
+    this repo did not measure may answer differently."""
+    if getattr(args, "cdp_endpoint", None):
+        return None
+    return ("No --cdp-endpoint: this run uses a local browser, and on "
+            "2026-09-28 Akamai refused local Chromium from a datacentre and "
+            "from a US residential exit alike (README access table). Expect "
+            "exit 3, or exit 5 if the refusal arrives as a reset connection.")
+
+
 def stop_reason_for(outcome) -> str:
     """The run's stop_reason when `outcome` is the page that ended it."""
     if getattr(outcome, "rejected", None):
@@ -282,9 +317,10 @@ def finish(args, query: Query, outcomes: List, stop_reason: str,
     One implementation for the three engines, so the merge order, the
     dedupe and the sidecar cannot differ between them (§6).
     """
-    rows, seen = [], set()
+    rows, seen, dropped = [], set(), 0
     for oc in sorted(outcomes, key=lambda o: o.page_num):
         fresh = dedupe_by_key(oc.products, seen, key="sku")
+        dropped += len(oc.products) - len(fresh)
         if len(fresh) < len(oc.products):
             log.info("Page %d: dropped %d duplicate row(s) — the listing moved "
                      "between page fetches.", oc.page_num,
@@ -301,7 +337,23 @@ def finish(args, query: Query, outcomes: List, stop_reason: str,
                  total, len(rows), 100.0 * len(rows) / total)
     last_ok = max([o.page_num for o in ok_pages] or [1])
     meta = {"total_results": total, "pages_available": available,
-            "query": query_summary(query)}
+            "query": query_summary(query), "duplicates_dropped": dropped}
+    # Dedupe sees a product fetched twice; it cannot see one that moved past
+    # a page boundary and was never fetched (audit 2026-10-08). Where the run
+    # read EVERY page of the listing, that gap is arithmetic against the
+    # site's own count (CLAUDE.md §8), and it is honest: two full category
+    # runs measured 270 of 270 and 36 of 36, so a non-zero here is the
+    # listing moving, not noise. On a slice of a listing nothing can be
+    # said, and the field is left out rather than guessed.
+    if (total is not None and available and not failed_pages
+            and len(ok_pages) >= available):
+        missing = total - len(rows)
+        meta["rows_missing_vs_total"] = missing
+        if missing:
+            log.warning("This run read every page of the listing, and holds %d "
+                        "product(s) %s the %d the site counted on page 1: the "
+                        "listing changed while it was being read.", abs(missing),
+                        "fewer than" if missing > 0 else "more than", total)
     meta.update(extra or {})
     return finish_run(
         rows, args.out, args.format, args.allow_empty,
@@ -361,6 +413,8 @@ class PageOutcome:
     # The site's own count of what matched, from this page's response.
     total_available: Optional[int] = None
     pages_available: Optional[int] = None
+    # Where the site sent a search instead of answering it (search_redirect).
+    redirect: Optional[str] = None
 
     @property
     def ok(self) -> bool:
@@ -524,8 +578,9 @@ def fetch_one_page(ops, args, pool, query: Query, page_num: int,
     outcome.state = state
     if state == "load_failed" or exit_failed:
         outcome.load_failed = True
-        log.error("Gave up on %s: %s", req.label,
-                  mask(last_error or "the request never completed"))
+        log.error("Gave up on %s: %s%s", req.label,
+                  mask(last_error or "the request never completed"),
+                  transport_hint(last_error))
     elif state == "rejected":
         outcome.rejected = api_error(text) or "HTTP 400"
         log.error("The endpoint refused this request (%s). That is a statement "
@@ -564,6 +619,8 @@ def fetch_listing_page(ops, args, pool, query: Query, page_num: int,
     _dump(args, page_num, text)
     rows = parse_page(text, query, page_num)
     outcome.products = rows
+    if query.mode == "search" and not rows:
+        outcome.redirect = search_redirect(text)
     outcome.total_available = total_results(text)
     outcome.pages_available = pages_available(outcome.total_available, query.page_size)
     log.info("Parsed %d row(s) from page %d.", len(rows), page_num)
@@ -642,6 +699,12 @@ def resolve_query(ops, args, pool, query: Query,
 
     if query.mode != "category":
         return None
+    return _resolve_category(ops, args, pool, query, mask)
+
+
+def _resolve_category(ops, args, pool, query: Query,
+                      mask: Callable[[str], str] = lambda s: s) -> Optional[PageOutcome]:
+    """The category's search id, from its own page. See resolve_query."""
     outcome, text = fetch_one_page(ops, args, pool, query, 1, mask,
                                    req=category_page_request(query),
                                    classify_fn=_page_state)
@@ -694,6 +757,9 @@ def run_pages(open_ops, close_ops, run_concurrently, args, pool,
     outcomes: List[PageOutcome] = []
     blocked, stop_reason = False, "completed"
     extra = {}
+    warning = access_warning(args)
+    if warning:
+        log.warning("%s", warning)
     ops = open_ops()
     try:
         try:
@@ -709,6 +775,37 @@ def run_pages(open_ops, close_ops, run_concurrently, args, pool,
         # Page 1 is always fetched alone: its total decides how many pages
         # there are to address (§7).
         first = fetch_listing_page(ops, args, pool, query, 1, mask)
+        if query.mode == "search" and first.ok and first.redirect:
+            # The site does not search this keyword; it sends it to a page.
+            # Follow a category redirect as a category run, and record both
+            # halves so the output says what was asked and what was read.
+            target, _why = query_from_url(BASE + first.redirect
+                                          if first.redirect.startswith("/")
+                                          else first.redirect)
+            if target is None or target.mode != "category":
+                log.error("The site does not search %r: it redirects it to %s, "
+                          "which is not a listing this repo reads. Nothing is "
+                          "concluded about the catalogue (the search answered "
+                          "0 only because it was redirected).",
+                          query.keyword, first.redirect)
+                return 2
+            log.warning("The site does not search %r: it redirects it to %s. "
+                        "Reading that category instead (recorded in the "
+                        "sidecar as search_redirected_to).",
+                        query.keyword, first.redirect)
+            extra["searched_keyword"] = query.keyword
+            extra["search_redirected_to"] = first.redirect
+            query.mode, query.slug = "category", target.slug
+            try:
+                failed = _resolve_category(ops, args, pool, query, mask)
+            except ResolveError as e:
+                log.error("%s", e)
+                return 2
+            if failed is not None:
+                outcomes.append(failed)
+                return finish(args, query, outcomes, stop_reason_for(failed),
+                              failed.blocked_by is not None, extra)
+            first = fetch_listing_page(ops, args, pool, query, 1, mask)
         outcomes.append(first)
         if query.mode == "search" and first.products:
             share = relevance_share(first.products, query.keyword)

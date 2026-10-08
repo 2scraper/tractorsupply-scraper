@@ -100,8 +100,13 @@ it is recoverable. In order:
 Three places leak credentials that people do not expect, because unlike our own
 log lines they are **not** masked:
 
-- **raw response dumps** (`--dump-html`, and the automatic `_debug.html` on a
-  refused page) — a captured page echoes cookie values and a session id
+- **raw response dumps.** Measured 2026-10-08: the search-endpoint responses
+  `--dump-html` writes, and the refusal pages saved as `_debug.html`, carried
+  no cookie or session value in any dump this repo has written. The
+  homepage does — Riskified and Adobe session ids in its markup — and it
+  reaches disk only as a `_debug.html` when the landing comes back as
+  something the run does not recognise. Dumps are not redacted, on purpose:
+  their job is the exact bytes the parser saw.
 - **your shell history**, if you passed a key on the command line
 
 Use `.env` for credentials. It is in `.gitignore`, and `python3 env_config.py`

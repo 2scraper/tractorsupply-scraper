@@ -676,6 +676,24 @@ def total_results(text: Any, mode: str = "") -> Optional[int]:
     return t if t is not None and t >= 0 else None
 
 
+def search_redirect(text: Any) -> Optional[str]:
+    """The page the site sends a keyword to INSTEAD of searching it, or None.
+
+    Some keywords are not searched at all. "chicken feed" (2026-10-08)
+    answered `resultsFound: 0`, no products and
+    `metaData.redirectURL: "/tsc/catalog/poultry-feed"` — the site's own
+    front end then navigates there. Read as a search, that is "the listing
+    is empty" (exit 4) about a query with hundreds of products; the run
+    follows it instead (page_flow.run_pages). Only an EMPTY answer counts:
+    a redirect hint beside real results is not acted on.
+    """
+    cat = catalog_record(text)
+    if cat is None or cat.get("error") or _entries(cat):
+        return None
+    data = cat.get("data") if isinstance(cat.get("data"), dict) else {}
+    return _str((data.get("metaData") or {}).get("redirectURL"))
+
+
 def pages_available(total: Optional[int], page_size: int) -> Optional[int]:
     if total is None:
         return None

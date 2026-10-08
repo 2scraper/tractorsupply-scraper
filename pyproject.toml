@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tractorsupply-scraper"
-version = "0.1.0"
+version = "0.1.1"
 description = "tractorsupply.com listing scraper: categories and searches priced per store, with list prices, unit prices, ratings and stock, from the site's own search endpoint (Playwright, Selenium or pyppeteer)."
 readme = "README.md"
 license = "MIT"

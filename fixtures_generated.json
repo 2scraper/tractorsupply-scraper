@@ -330,6 +330,29 @@
   },
   "text": "{\"type\": \"thread_start\", \"data\": {\"message\": \"Stream thread started\", \"threadId\": \"task-2\", \"timestamp\": 1790585343183}}\n{\"type\": \"catalog\", \"error\": \"Cannot invoke \\\"java.lang.Double.doubleValue()\\\" because the return value of \\\"com.tsc.app.search.model.catalog.CatalogResponse$SearchDocument.getPrice()\\\" is null\"}\n{\"message\": \"No products to check inventory for\", \"data\": {}, \"type\": \"oms_inventory\"}\n{\"type\": \"thread_end\", \"data\": {\"message\": \"Stream thread closed — all chunks delivered\", \"threadId\": \"task-2\", \"timestamp\": 1790585343314}}\n"
  },
+ "search_redirect": {
+  "kind": "search",
+  "query": {
+   "keyword": "chicken feed",
+   "mode": "search"
+  },
+  "source": "search_redirect_chicken_feed.ndjson",
+  "status": null,
+  "stores": {
+   "state": null,
+   "store_ids": [
+    "2293",
+    "568",
+    "1581",
+    "1964",
+    "1131",
+    "2737"
+   ],
+   "zip_code": "30013",
+   "zone": "23"
+  },
+  "text": "{\"data\": {\"threadId\": \"task-1\", \"message\": \"Stream thread started\", \"timestamp\": 1791468437561}, \"type\": \"thread_start\"}\n{\"data\": {\"recordSetCount\": 0, \"recordSetStartNumber\": 0, \"responseTimeMS\": 24, \"recordSetComplete\": \"true\", \"metaData\": {\"resultsFound\": 0, \"price\": \"1\", \"queryParams\": [{\"q\": \"chicken feed\", \"fq\": \"\"}], \"removedFacets\": [], \"appliedFilters\": [], \"currentUrl\": \"?filter=\", \"cesResult\": false, \"relaxedQuery\": \"\", \"spellCorrectedQuery\": \"\", \"spellCheckSuggestions\": [], \"redirectURL\": \"/tsc/catalog/poultry-feed\", \"isBrandQuery\": false, \"isCategoryQuery\": false}, \"relatedSearches\": [], \"catalogEntryView\": [], \"resourceId\": \"https://pwcdauseo-zone.cnstrc.com/search/chicken%20feed?key=*****&us=web&us=Desktop&page=1&num_results_per_page=48&fmt_options[hidden_fields]=prices.z53&fmt_options[hidden_fields]=availability.s2314_A&fmt_options[hidden_fields]=availability.s263_A&fmt_options[hidden_fields]=availability.s516_A&fmt_options[hidden_fields]=availability.s495_A&fmt_options[hidden_fields]=availability.s782_A&fmt_options[hidden_fields]=availability.s500_A&fmt_options[hidden_fields]=availability.sfsstde&fmt_options[groups_max_depth]=8&fmt_options[groups_start]=top&fmt_options[hidden_facets]=sku_price_53&fmt_options[hidden_facets]=price_53&fmt_options[hidden_facets]=variant_price_type_53&i=1527f898-927a-4c2b-95a0-b1107e04d986&s=1&c=cio-be-web-tractorsupply&sort_by=relevance&sort_order=descending&fmt_options[facet_options][storeInventory]=2314_A&fmt_options[facet_options][storeInventory]=2314_A_T&fmt_options[facet_options][storeInventory]=263_A&fmt_options[facet_options][storeInventory]=263_A_T&fmt_options[facet_options][storeInventory]=516_A&fmt_options[facet_options][storeInventory]=516_A_T&fmt_options[facet_options][storeInventory]=495_A&fmt_options[facet_options][storeInventory]=495_A_T&fmt_options[facet_options][storeInventory]=782_A&fmt_options[facet_options][storeInventory]=782_A_T&fmt_options[facet_options][storeInventory]=500_A&fmt_options[facet_options][storeInventory]=500_A_T&fmt_options[facet_options][storeInventory]=sde&fmt_options[facet_options][storeInventory]=sfsstde&referrer=https://www.tractorsupply.com/&origin_referrer=https://www.tractorsupply.com/\"}, \"type\": \"catalog\"}\n{\"data\": {}, \"message\": \"No products to check inventory for\", \"type\": \"oms_inventory\"}\n{\"data\": {\"threadId\": \"task-1\", \"message\": \"Stream thread closed — all chunks delivered\", \"timestamp\": 1791468437586}, \"type\": \"thread_end\"}\n"
+ },
  "stores_75001": {
   "kind": "stores",
   "query": null,

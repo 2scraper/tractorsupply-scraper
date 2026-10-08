@@ -7,6 +7,42 @@ toolkit can: a patch release means **fixes**, not that every flag and
 default is frozen. A default that changes behaviour for an existing user is
 said so at the top of its release notes.
 
+## [0.1.1] — 2026-10-08
+
+> **Behaviour change for existing users:** a keyword the site redirects to a
+> category (for example "chicken feed") used to end with exit 4, "the
+> listing is empty". It now reads that category and exits 0, with
+> `searched_keyword` and `search_redirected_to` in the sidecar and the rows
+> marked `mode: category`. A pipeline that branched on exit 4 for such a
+> keyword was branching on a false statement about the catalogue.
+
+From a third-party audit (2026-10-08), each finding reproduced before it
+was fixed.
+
+### Fixed
+
+- **A failed rewrite no longer destroys the previous good output.** JSON,
+  CSV and the sidecar were opened with truncation, so a crash or a full disk
+  during a rerun left the last good files as a few bytes of invalid JSON
+  (reproduced: 4,518 bytes became 13). Each is now written beside its
+  target and renamed over it, keeping the mode `open()` would have given a
+  new file and an existing file's own mode. Lifted from woolworths-scraper.
+- **A search the site redirects is followed, not called empty** (above).
+- **A reset landing explains itself.** Without `--cdp-endpoint` the run
+  warns up front, and a homepage that fails with `ERR_HTTP2_PROTOCOL_ERROR`
+  or a reset connection says that this is how Akamai refused local Chromium
+  in testing. Still exit 5: a reset alone does not prove a refusal.
+
+### Added
+
+- `outputs` in the sidecar: each output file with its size and sha256, so a
+  consumer can tell a complete set from one caught mid-update.
+- `duplicates_dropped`, and, when a run read every page,
+  `rows_missing_vs_total` against the site's own count.
+- CSV formula neutralisation (`csv_cells_escaped`), CSV only. It fires on
+  0 of 18,611 string cells in 1,049 unique live rows (2026-10-08); it is here because every string in
+  a row was written by someone else.
+
 ## [0.1.0] — 2026-09-28
 
 First release. Category, department and search listings from
