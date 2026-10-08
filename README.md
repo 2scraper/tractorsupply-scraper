@@ -111,9 +111,23 @@ Outputs `tractorsupply_products.json`, `.csv` and `.meta.json`
 (`--out` changes the prefix). A real one is committed as
 [`sample_output.json`](sample_output.json) / [`.csv`](sample_output.csv).
 
+**Reading the output safely.** Each file is replaced atomically (written
+beside its target, then renamed), so a crash or a full disk mid-run leaves
+the previous good file whole rather than truncated. Three files cannot be
+replaced at once, though, so the sidecar is written last and lists the
+others with their size and sha256 (`outputs`): read the sidecar first, check
+the files against it, and treat a mismatch as "mid-update, read again". The
+sidecar also says how complete the run is against the site's own count:
+`total_results`, `duplicates_dropped`, and — only when the run read every
+page of the listing — `rows_missing_vs_total`. Two full live runs measured
+0 (270 of 270, 36 of 36); a non-zero means the listing moved while it was
+being read. In the CSV only, a text cell that begins with `=`, `+`, `-` or
+`@` is prefixed with an apostrophe so a spreadsheet does not execute it; the
+JSON keeps the site's bytes, and `csv_cells_escaped` says how many.
+
 ---
 
-## Six things about Tractor Supply that will look like bugs
+## Seven things about Tractor Supply that will look like bugs
 
 ### 1. Prices are per store
 
@@ -164,6 +178,17 @@ Not 404: an unknown slug is answered with the site's own error page under a
 server-error status. The run recognises the page, stops with exit 2 and says
 there is no such category, instead of retrying a "fault".
 
+### 7. Some searches are not searches
+
+"chicken feed" is answered with **0 results** and a redirect to
+`/tsc/catalog/poultry-feed` — the site's own front end then navigates there.
+Read as a search, that is "the listing is empty" about a query with
+hundreds of products, which is what v0.1.0 reported (exit 4). The run now
+follows a redirect to a category, reads that category, and records
+`searched_keyword` and `search_redirected_to` in the sidecar; the rows are
+then `mode: category`. A redirect to anything else stops with exit 2 and
+says where it pointed, rather than calling the catalogue empty.
+
 ---
 
 ## Engines
@@ -188,7 +213,7 @@ live connection. Use several `pid`s, one run each.
 ## What the 2Captcha products buy, and when
 
 * **Scraping Browser API** — the one client this site served, from a US
-  exit. `country-us`; a profile's credentials last about a day.
+  exit. `country-us`. Its credentials expire: the family measured about a day on other profiles; the endpoint this repo was built with still worked 10 days after it was issued (2026-09-28 to 2026-10-08). A 401 on connect is the sign.
 * **Proxies** — supported (`--proxy`, `--proxy-file`, rotation and
   per-exit retries), but on 2026-09-28 a US residential exit was **not**
   enough for local Chromium (the table above). Measure before paying for
@@ -214,7 +239,7 @@ live connection. Use several `pid`s, one run each.
 | 2 | bad usage, or a listing the site does not have: an unknown category, a ZIP with no store |
 | 3 | blocked: Akamai refused the client (`stop_reason: blocked_akamai`) |
 | 4 | the listing is genuinely empty; nothing is written, so an earlier good file survives |
-| 5 | the data never arrived: a timeout, a remote-browser error (401 = expired endpoint), or the endpoint refused the parameters and said why |
+| 5 | the data never arrived: a timeout, a remote-browser error (401 = expired endpoint), a reset connection, or the endpoint refused the parameters and said why. A reset is also how Akamai refused local Chromium in testing, and the error says so; it stays 5 rather than 3 because a reset alone does not prove a refusal |
 | 6 | partial: some pages came back, a later one did not; the sidecar lists which |
 
 See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for each.
@@ -250,10 +275,10 @@ Offline, about a second, no browser and no key. The fixtures are real
 responses captured 2026-09-28, cut down by `make_fixtures.py`, which proves
 each one parses identically to its original. CI runs the suite on Python 3.9
 and 3.12, once more per engine in its own virtualenv, and builds the Docker
-image. The canary (`canary.yml`) runs three real pages of each mode; it is
-dispatch-only and skips without a `TRACTORSUPPLY_CDP_ENDPOINT` secret,
-because a GitHub runner is one of the clients the site refuses and an
-endpoint's credentials do not outlive a day.
+image. The canary (`canary.yml`) runs three real pages of each mode weekly
+through the Scraping Browser; without a `TRACTORSUPPLY_CDP_ENDPOINT` secret
+it skips with a notice, because a GitHub runner is one of the clients the
+site refuses. When the endpoint expires it goes red with a 401.
 
 ## Legal
 

@@ -18,7 +18,7 @@ body:
           datacentre and from a US residential proxy alike. See the README's
           access table, and say in the report which client you used.
         - **Exit 5 on connect, HTTP 401?** A Scraping Browser profile's
-          credentials last about a day. Get a fresh endpoint.
+          credentials expire (from about a day to over ten days, measured). Get a fresh endpoint.
         - **Exit 4, zero rows?** The listing may genuinely be empty. That is
           a correct answer. See
           [TROUBLESHOOTING.md](../blob/main/TROUBLESHOOTING.md).

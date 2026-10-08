@@ -118,7 +118,7 @@ def check_fixture_corpus_is_real_and_scrubbed():
     expected = {"cat_p1", "cat_p2", "cat_past_end", "cat_unknown_id", "price_ga",
                 "price_tx", "kw_p1", "kw_junk", "rejected_zone", "rejected_sort",
                 "rejected_page_size", "rejected_no_channel", "rejected_no_store",
-                "circuit_breaker",
+                "circuit_breaker", "search_redirect",
                 "stores_75001", "stores_99501", "page_category",
                 "page_department_farm_ranch", "page_department_pet", "page_missing",
                 "akamai_raw", "akamai_dom_cdp", "landing_cdp"}
@@ -1388,6 +1388,267 @@ def check_readme_numbers_are_not_stale():
     import product_parser as P
     check("the README states the default ZIP the code uses", P.DEFAULT_ZIP in readme)
     check("...and the page-size ceiling", str(P.MAX_PAGE_SIZE) in readme)
+
+
+# ---------------------------------------------------------------------------
+# Writing over a good output (audit 2026-10-08; lifted from woolworths-scraper)
+# ---------------------------------------------------------------------------
+
+class _Unserialisable:
+    pass
+
+
+def _one_row(**kw):
+    from output_writer import Product
+    base = dict(url="u", sku="1", title="t")
+    base.update(kw)
+    return Product(**base)
+
+
+def check_a_failed_write_leaves_the_previous_good_output_intact():
+    """`open(path, "w")` truncated before writing, so a crash or a full disk
+    during a rerun destroyed the previous good run. Reproduced on this repo
+    before the fix: a 4,518-byte out.json and its sidecar came back as 13
+    bytes of invalid JSON each."""
+    import output_writer as O
+    with tempfile.TemporaryDirectory() as d:
+        prefix = os.path.join(d, "out")
+        O.write_json([_one_row()], prefix + ".json")
+        O.write_run_meta(prefix, {"status": "complete"})
+        O.write_csv([_one_row()], prefix + ".csv")
+        good = {s: open(prefix + s, "rb").read() for s in (".json", ".meta.json", ".csv")}
+        try:
+            O.write_json([_one_row(title=_Unserialisable())], prefix + ".json")
+        except TypeError:
+            pass
+        try:
+            O.write_run_meta(prefix, {"status": "complete", "x": _Unserialisable()})
+        except TypeError:
+            pass
+        real = O._csv_value
+        O._csv_value = lambda v: (_ for _ in ()).throw(RuntimeError("disk full"))
+        try:
+            O.write_csv([_one_row()], prefix + ".csv")
+        except RuntimeError:
+            pass
+        finally:
+            O._csv_value = real
+        for s, b in good.items():
+            equal("a failed rewrite leaves the previous %s byte-identical" % s,
+                  open(prefix + s, "rb").read(), b)
+        equal("...and no temp file behind",
+              [n for n in os.listdir(d) if n.endswith(".tmp")], [])
+
+
+def check_the_csv_asks_for_newline_through_the_temp_file():
+    """Asserted on the ARGUMENT: on Linux dropping it changes no byte, so a
+    byte check could not fail here (woolworths measured exactly that)."""
+    import output_writer as O
+    seen, original = {}, O._atomic
+
+    def recording(path, newline=None):
+        seen[os.path.basename(path)] = newline
+        return original(path, newline)
+    O._atomic = recording
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            O.write_csv([_one_row()], os.path.join(d, "out.csv"))
+            O.write_json([_one_row()], os.path.join(d, "out.json"))
+    finally:
+        O._atomic = original
+    equal("write_csv passes newline='' to the temp file", seen.get("out.csv"), "")
+    equal("...and the JSON writer does not", seen.get("out.json"), None)
+
+
+def _mode_after(umask, existing_mode=None):
+    import output_writer as O
+    import stat
+    previous = os.umask(umask)
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            prefix = os.path.join(d, "out")
+            if existing_mode is not None:
+                O.write_json([_one_row()], prefix + ".json")
+                os.chmod(prefix + ".json", existing_mode)
+            O.write_json([_one_row()], prefix + ".json")
+            O.write_csv([_one_row()], prefix + ".csv")
+            O.write_run_meta(prefix, {"status": "complete"})
+            return {s: stat.S_IMODE(os.stat(prefix + s).st_mode)
+                    for s in (".json", ".csv", ".meta.json")}
+    finally:
+        os.umask(previous)
+
+
+def check_outputs_get_the_mode_open_would_have_given_them():
+    """NamedTemporaryFile creates at 0600 and os.replace keeps it, so an
+    atomic write without this makes every output private to one account.
+    0666 MASKED, not a flat 0644: the two agree under umask 022 and differ
+    under 002, which is why both are pinned (a sibling shipped the flat
+    rule and corrected it a day later)."""
+    equal("umask 022 -> 0644", set(_mode_after(0o022).values()), {0o644})
+    equal("umask 002 -> 0664 (a flat 0644 would narrow it)",
+          set(_mode_after(0o002).values()), {0o664})
+    equal("umask 077 -> 0600 (masked, never forced wider)",
+          set(_mode_after(0o077).values()), {0o600})
+    equal("an existing output someone tightened to 0600 stays 0600",
+          _mode_after(0o022, existing_mode=0o600)[".json"], 0o600)
+
+
+def check_a_formula_shaped_cell_is_neutralised_in_csv_only():
+    import output_writer as O
+    row = _one_row(title='=HYPERLINK("http://x","Feed")', brand="@SUM(A1:A9)")
+    with tempfile.TemporaryDirectory() as d:
+        prefix = os.path.join(d, "out")
+        escaped = O.write_csv([row], prefix + ".csv")
+        O.write_json([row], prefix + ".json")
+        text = open(prefix + ".csv", encoding="utf-8").read()
+        js = json.load(open(prefix + ".json", encoding="utf-8"))
+    equal("two formula-shaped cells counted", escaped, 2)
+    check("...prefixed with an apostrophe in the CSV",
+          "'=HYPERLINK" in text and "'@SUM" in text)
+    check("...and left exactly as served in the JSON",
+          js[0]["title"].startswith("=") and js[0]["brand"].startswith("@"))
+    equal("a negative NUMBER is not turned into text", O._csv_escape(-5.5), (-5.5, False))
+    equal("...while the string '-5' is escaped", O._csv_escape("-5"), ("'-5", True))
+
+
+def check_a_list_cell_is_escaped_after_it_becomes_a_string():
+    """Driven through write_csv, not by composing the helpers by hand: the
+    sibling's first version composed them in the right order inside the
+    test and passed against write_csv doing it backwards."""
+    import dataclasses
+    import output_writer as O
+
+    @dataclasses.dataclass
+    class _ListRow:
+        sku: str = "1"
+        tags: list = dataclasses.field(default_factory=list)
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "out.csv")
+        escaped = O.write_csv([_ListRow(tags=["=cmd|calc", "x"])], path, row_cls=_ListRow)
+        text = open(path, encoding="utf-8").read()
+    equal("the joined list cell is counted", escaped, 1)
+    check("...and neutralised", "'=cmd|calc" in text)
+
+
+def check_the_escape_count_reaches_the_sidecar_under_the_callers_extra():
+    import output_writer as O
+    for extra, want in (({"csv_cells_escaped": "the caller's"}, "the caller's"), (None, 1)):
+        with tempfile.TemporaryDirectory() as d:
+            prefix = os.path.join(d, "out")
+            O.finish_run([_one_row(title="=1+1")], prefix, "both", False, blocked=False,
+                         stop_reason="completed", pages_requested=1, pages_completed=1,
+                         start_url="u", final_url="u", mode="category", extra=extra)
+            meta = json.load(open(prefix + ".meta.json", encoding="utf-8"))
+        equal("csv_cells_escaped in the sidecar (%s)" % ("caller wins" if extra else "counted"),
+              meta.get("csv_cells_escaped"), want)
+
+
+def check_a_reset_landing_says_what_it_probably_is():
+    """The audit's own run (2026-10-08): no --cdp-endpoint, the homepage
+    reset with ERR_HTTP2_PROTOCOL_ERROR three times, exit 5 and a bare
+    error naming no cause. Still exit 5 — a reset is not proof of a block —
+    but the run now warns before it starts and explains when it stops."""
+    import logging
+    import page_flow
+
+    class Resetting(_FakeOps):
+        def goto(self, url):
+            self.gotos += 1
+            raise page_flow.TransportError(
+                "Page.goto: net::ERR_HTTP2_PROTOCOL_ERROR at https://www.tractorsupply.com/")
+
+    records = []
+
+    class Grab(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+    h = Grab()
+    page_flow.log.addHandler(h)
+    try:
+        rc, meta, rows, ops = _run(Resetting())
+    finally:
+        page_flow.log.removeHandler(h)
+    equal("a reset landing is exit 5, not a claimed block", rc, 5)
+    check("the run warned up front that no --cdp-endpoint was given",
+          any("No --cdp-endpoint" in m for m in records), repr(records[:2]))
+    check("...and the final error names the likely cause",
+          any("Gave up" in m and "Akamai refused local Chromium" in m for m in records))
+    rc, meta, rows, ops = _run(_FakeOps(search={1: [(200, fx("cat_p1"))]}),
+                               pages=1, cdp_endpoint="ws://x")
+    import page_flow as F
+    equal("no warning when the endpoint IS set",
+          F.access_warning(types.SimpleNamespace(cdp_endpoint="ws://x")), None)
+    equal("a timeout gets no Akamai hint (it is not that shape)",
+          F.transport_hint("Timeout 60000ms exceeded"), "")
+
+
+def check_a_search_the_site_redirects_is_followed_not_called_empty():
+    """Found while measuring the audit's snapshot claim (2026-10-08): the
+    keyword "chicken feed" answers resultsFound 0 with a redirectURL to
+    /tsc/catalog/poultry-feed, and the run reported exit 4, "the listing is
+    empty", about a query with hundreds of products."""
+    import product_parser as P
+    equal("the redirect is read from the empty answer",
+          P.search_redirect(fx("search_redirect")), "/tsc/catalog/poultry-feed")
+    equal("...and never from an answer that has products",
+          P.search_redirect(fx("kw_p1")), None)
+    ops = _FakeOps(search={1: [(200, fx("search_redirect")), (200, fx("cat_p1"))]})
+    rc, meta, rows, ops = _run(ops, P.Query("search", keyword="chicken feed"), pages=1)
+    equal("the run follows it and reads the category: exit 0", rc, 0)
+    equal("...search page 1, then the category page, then page 1 again",
+          ops.fetches, ["stores", 1, "page", 1])
+    equal("...and the sidecar says what was asked and what was read",
+          (meta and meta.get("searched_keyword"), meta and meta.get("search_redirected_to"),
+           meta and meta.get("mode")),
+          ("chicken feed", "/tsc/catalog/poultry-feed", "category"))
+    odd = fx("search_redirect").replace("/tsc/catalog/poultry-feed", "/tsc/store_locator")
+    check("the planted redirect really changed (control)", odd != fx("search_redirect"))
+    rc, meta, rows, ops = _run(_FakeOps(search={1: [(200, odd)]}),
+                               P.Query("search", keyword="chicken feed"), pages=1)
+    equal("a redirect to a page this repo does not read: exit 2, not 'empty'", rc, 2)
+
+
+def check_the_sidecar_states_the_snapshot_arithmetic():
+    """Mechanism only: the fixtures are CUT (4 + 3 products kept of 37), so
+    the 30 below is an artefact of the cut, not a measurement. The live
+    figures are in page_flow.finish: 270 of 270 and 36 of 36."""
+    ops = _FakeOps(search={1: [(200, fx("cat_p1"))], 2: [(200, fx("cat_p2"))]})
+    rc, meta, rows, ops = _run(ops, pages=2)
+    equal("a run that read every page states the gap against the site's count",
+          (meta.get("rows_missing_vs_total"), meta.get("duplicates_dropped")), (37 - 7, 0))
+    ops = _FakeOps(search={1: [(200, fx("cat_p1"))]})
+    rc, meta, rows, ops = _run(ops, pages=1)
+    check("a SLICE of the listing claims no gap at all", "rows_missing_vs_total" not in meta)
+    ops = _FakeOps(search={1: [(200, fx("cat_p1"))], 2: [(200, fx("cat_p1"))]})
+    rc, meta, rows, ops = _run(ops, pages=2)
+    equal("a product fetched twice is counted as dropped", meta.get("duplicates_dropped"), 4)
+
+
+def check_the_sidecar_is_a_manifest_of_the_files_beside_it():
+    """A reader between two renames sees new rows beside an old sidecar.
+    The sidecar is written last and names what it describes."""
+    import hashlib
+    import output_writer as O
+    with tempfile.TemporaryDirectory() as d:
+        prefix = os.path.join(d, "out")
+        O.finish_run([_one_row()], prefix, "both", False, blocked=False,
+                     stop_reason="completed", pages_requested=1, pages_completed=1,
+                     start_url="u", final_url="u", mode="category")
+        meta = json.load(open(prefix + ".meta.json", encoding="utf-8"))
+        outs = meta.get("outputs") or {}
+        equal("both outputs are listed", sorted(outs), ["out.csv", "out.json"])
+        for name, info in outs.items():
+            blob = open(os.path.join(d, name), "rb").read()
+            equal("%s: the recorded sha256 is the file's" % name,
+                  info["sha256"], hashlib.sha256(blob).hexdigest())
+            equal("%s: and its size" % name, info["bytes"], len(blob))
+        O.finish_run([_one_row()], prefix, "json", False, blocked=False,
+                     stop_reason="completed", pages_requested=1, pages_completed=1,
+                     start_url="u", final_url="u", mode="category")
+        meta = json.load(open(prefix + ".meta.json", encoding="utf-8"))
+        equal("--format json lists only what THIS run wrote, not a stale CSV",
+              sorted(meta.get("outputs") or {}), ["out.json"])
 
 
 _TREE_BEFORE = None
