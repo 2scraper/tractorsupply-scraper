@@ -33,6 +33,16 @@ was fixed.
   or a reset connection says that this is how Akamai refused local Chromium
   in testing. Still exit 5: a reset alone does not prove a refusal.
 
+### Changed
+
+- **The canary runs weekly**, not only on dispatch. It was dispatch-only on
+  the family's figure that a Scraping Browser endpoint's credentials "last
+  about a day" — copied, never measured here. Measured: the endpoint set on
+  2026-09-28 was still served on 2026-10-08 (a canary ran on it and
+  passed, 144 of 270 and 144 of 1,070). Every place that repeated "about a
+  day" now states the measured range, and an expired endpoint shows up as a
+  red canary with a 401.
+
 ### Added
 
 - `outputs` in the sidecar: each output file with its size and sha256, so a

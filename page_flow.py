@@ -932,12 +932,13 @@ def cdp_connect_hint(error_text: str) -> str:
     """What a failed --cdp-endpoint connection means, from its status.
 
     Two answers that want opposite fixes: a 401 is expired credentials (a
-    profile's last about a day), a 500 is a profile another run still holds.
+    profile's expire), a 500 is a profile another run still holds.
     """
     if "401" in (error_text or ""):
         return ("HTTP 401: the endpoint's credentials were refused. A Scraping "
-                "Browser profile's credentials last about a day, so an "
-                "endpoint copied from an older .env has usually expired. "
+                "Browser profile's credentials expire (from about a day to "
+                "over ten days, measured), so an "
+                "endpoint copied from an older .env may have expired. "
                 "Get a fresh one from your 2Captcha dashboard.")
     return ("A Scraping Browser profile allows ONE live connection at a time, "
             "so an HTTP 500 here usually means another run still holds this "

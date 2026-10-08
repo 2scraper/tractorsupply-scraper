@@ -41,7 +41,7 @@ good file is left alone; `--allow-empty` writes the empty file.
 ## Exit 5 — the data never arrived
 
 * **HTTP 401 on connect** — the Scraping Browser endpoint's credentials
-  expired. They last about a day.
+  expired. How long they live varies: the family measured about a day on other profiles; the endpoint this repo was built with still worked 10 days after it was issued (2026-09-28 to 2026-10-08).
 * **HTTP 500 / `profile_locked` on connect** — another run holds that `pid`.
   A profile allows one live connection; the engines retry three times, 3 s
   apart, because a profile stays locked for about two seconds after a clean

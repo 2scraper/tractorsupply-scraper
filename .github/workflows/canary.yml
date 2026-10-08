@@ -1,7 +1,7 @@
 # One real run of each mode against tractorsupply.com. tests.yml
 # (deliberately) never touches the site.
 #
-# DISPATCH-ONLY, and SKIPPED without its secret. Two measurements decide it:
+# WEEKLY, and SKIPPED without its secret. Two measurements decide it:
 #
 #   * Akamai refused every client this repo tried except the 2Captcha
 #     Scraping Browser with a US exit (2026-09-28; the README's access
@@ -10,9 +10,15 @@
 #     endpoint cannot pass — and a check that is always red teaches everyone
 #     to ignore checks (CLAUDE.md §11). Without the secret it goes green with
 #     a ::notice:: saying why.
-#   * A Scraping Browser profile's credentials last about a day (§19), so a
-#     SCHEDULED run would be red by the next morning for a reason that has
-#     nothing to do with the site. Dispatch it when there is a fresh one:
+#   * How long a Scraping Browser endpoint's credentials live. This was
+#     dispatch-only on the family's figure of "about a day", copied rather
+#     than measured. Measured: the endpoint set here on 2026-09-28 was still
+#     served on 2026-10-08, when a canary ran on it by accident and passed
+#     (144 of 270, 144 of 1,070). So a weekly run tests the real path for
+#     most of an endpoint's life, and when it expires the run goes red with
+#     exit 5 and a 401 — which says exactly what to do. A third-party audit
+#     (2026-10-08) asked for continuous live monitoring; this is the part of
+#     that the measurement supports. To rotate:
 #
 #     gh secret set TRACTORSUPPLY_CDP_ENDPOINT --repo 2scraper/tractorsupply-scraper
 #     gh workflow run canary.yml --repo 2scraper/tractorsupply-scraper
@@ -25,6 +31,9 @@
 name: canary
 
 on:
+  schedule:
+    # Mondays 06:20 UTC. Not on the hour: every scheduled workflow fires at :00.
+    - cron: "20 6 * * 1"
   workflow_dispatch:
 
 permissions:

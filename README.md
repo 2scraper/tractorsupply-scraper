@@ -213,7 +213,7 @@ live connection. Use several `pid`s, one run each.
 ## What the 2Captcha products buy, and when
 
 * **Scraping Browser API** — the one client this site served, from a US
-  exit. `country-us`; a profile's credentials last about a day.
+  exit. `country-us`. Its credentials expire: the family measured about a day on other profiles; the endpoint this repo was built with still worked 10 days after it was issued (2026-09-28 to 2026-10-08). A 401 on connect is the sign.
 * **Proxies** — supported (`--proxy`, `--proxy-file`, rotation and
   per-exit retries), but on 2026-09-28 a US residential exit was **not**
   enough for local Chromium (the table above). Measure before paying for
@@ -275,10 +275,10 @@ Offline, about a second, no browser and no key. The fixtures are real
 responses captured 2026-09-28, cut down by `make_fixtures.py`, which proves
 each one parses identically to its original. CI runs the suite on Python 3.9
 and 3.12, once more per engine in its own virtualenv, and builds the Docker
-image. The canary (`canary.yml`) runs three real pages of each mode; it is
-dispatch-only and skips without a `TRACTORSUPPLY_CDP_ENDPOINT` secret,
-because a GitHub runner is one of the clients the site refuses and an
-endpoint's credentials do not outlive a day.
+image. The canary (`canary.yml`) runs three real pages of each mode weekly
+through the Scraping Browser; without a `TRACTORSUPPLY_CDP_ENDPOINT` secret
+it skips with a notice, because a GitHub runner is one of the clients the
+site refuses. When the endpoint expires it goes red with a 401.
 
 ## Legal
 
