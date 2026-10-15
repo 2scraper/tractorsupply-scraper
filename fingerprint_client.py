@@ -31,7 +31,7 @@ during development shouldn't re-bill every time.
 Chromium-format response (the fields this module actually uses):
     id, country,
     screen:            {width, height}
-    userAgent:         {value}
+    userAgent:         {userAgent}   (raw format: data.ua; see fingerprint_user_agent)
     navigator:         {platform, hardwareConcurrency, deviceMemory}
     webgl:             {vendor, renderer}
     speechSynthesis:   {voices: [...]}
@@ -331,7 +331,7 @@ def main() -> int:
     # loader. It used to read `os.environ` alone, which meant a key put in
     # `.env` exactly as the README and .env.example instruct worked for every
     # engine and failed HERE with "No API key" — a documented mechanism not
-    # applied on one path, which is the shape of half the defects §16 lists.
+    # applied on one path, a common shape of defect in copied code.
     #
     # `.env` has to be LOADED before it can be read: `env_value` looks at
     # os.environ, and `load_env` is what fills that from the file. Calling it

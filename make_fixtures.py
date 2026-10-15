@@ -149,9 +149,8 @@ def cut_search(text, keep):
             # `most_attractive_seo_tokens` is a list of colour variants'
             # URL slugs under the key `seoToken`, which the family's
             # credential scan reads as a token field. The parser never reads
-            # it, so it is dropped rather than exempted (CLAUDE.md §24:
-            # "before adding an exemption, check whether the value is
-            # needed at all").
+            # it, so it is dropped rather than exempted: before adding an
+            # exemption, check whether the value is needed at all.
             for e in ents:
                 e.pop("most_attractive_seo_tokens", None)
             data["catalogEntryView"] = ents
@@ -206,8 +205,8 @@ def cut_page(html):
 def cut_landing(html):
     """The CDP-served homepage: its title, one asset tag, and every tag the
     Scraping Browser's auto-solve extension injected — which is the point of
-    this fixture (§24: a marker set must score zero on a page fetched the
-    way a real run fetches it)."""
+    this fixture (a marker set must score zero on a page fetched the way a
+    real run fetches it)."""
     injected = re.findall(r"<script[^>]*chrome-extension://[^>]*>\s*</script>", html)
     widgets = re.findall(r"<captcha-widgets[^>]*>.*?</captcha-widgets>", html, re.S)
     title = re.search(r"<title[^>]*>(.*?)</title>", html, re.S)
@@ -237,7 +236,7 @@ def verify(name, kind, orig, cut, spec, stores):
         mine = rows_json(pp.parse_page(cut, q, 1))
         skus = [r["sku"] for r in mine]
         want = [r for r in full if r["sku"] in skus]
-        # position counts EMITTED rows (§24), so it is the one column a cut
+        # position counts EMITTED rows, so it is the one column a cut
         # legitimately renumbers.
         for r in want + mine:
             r.pop("position")

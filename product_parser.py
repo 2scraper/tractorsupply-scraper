@@ -1,7 +1,7 @@
 """
 product_parser.py
 -----------------
-Everything this repo knows about tractorsupply.com lives here (CLAUDE.md §1).
+Everything this repo knows about tractorsupply.com lives here.
 
 Two modes, one of the site's own endpoints
 ------------------------------------------
@@ -260,7 +260,7 @@ def request_for(query: Query, page: int) -> ApiRequest:
     Mirrors the site's own worker, minus the sponsored-listing parameters
     (`pgname`, `expname`, `maxreq`, …): without them `sponsoredListings`
     comes back null and every row is an organic result, so no paid placement
-    can shift a position (§24).
+    can shift a position.
     """
     stores = query.stores
     store_param = "|".join(stores.store_ids) if stores else ""
@@ -361,7 +361,7 @@ def query_from_url(url: str) -> Tuple[Optional[Query], Optional[str]]:
 # The raw bytes spell the punctuation as entities
 # (`errors&#46;edgesuite&#46;net`, `Reference&#32;&#35;18…`) while a browser
 # DOM serialises it back out plain, so the text is unescaped over a bounded
-# prefix before matching (§20).
+# prefix before matching.
 _AKAMAI_REF_RE = re.compile(r"Reference\s*#\s*\d+\.[0-9a-f]+\.\d+\.[0-9a-f]+", re.I)
 AKAMAI_DENY_MARKERS = ("errors.edgesuite.net",)
 
@@ -483,7 +483,7 @@ def detect_page_state(text: Optional[str], status: Optional[int] = None,
         throttled   429. Not observed on this site; the status's meaning.
         unknown     anything else
 
-    Signals are ordered by what they PROVE (§17): the endpoint's own
+    Signals are ordered by what they PROVE: the endpoint's own
     records first, because no refusal page carries them. `waf_action` is
     unused here and kept so every engine shares one call shape.
     """
@@ -509,7 +509,7 @@ def detect_page_state(text: Optional[str], status: Optional[int] = None,
 
 
 # A served document is built out of the site's own assets and a refusal is
-# not (§8): counted on 2026-09-28, `media.tractorsupply.com` occurs 92 times
+# not: counted on 2026-09-28, `media.tractorsupply.com` occurs 92 times
 # on the served homepage and dozens of times on each served /tsc/ page, and
 # 0 times on every refusal.
 SITE_ASSET_MARKER = "media.tractorsupply.com"
@@ -843,7 +843,7 @@ def parse_entry(entry: Dict[str, Any], query: Query, inventory: Dict[str, Dict[s
         rating = _float((at.get("_BazaarVoiceReviewRating") or [None])[0])
     count = _int((at.get("_BazaarVoiceReviewCount") or [None])[0])
     # A product nobody has reviewed carries no rating attribute at all (40
-    # of 249) rather than a zero. Guard the zero anyway (§21): a rating of 0
+    # of 249) rather than a zero. Guard the zero anyway: a rating of 0
     # with no reviews is "unreviewed", not a grade.
     if not count and rating == 0.0:
         rating = None
@@ -906,7 +906,7 @@ def parse_page(text: Any, query: Query, page: int = 1) -> List[Product]:
     """Every product on one page, in the site's order.
 
     `position` counts the rows EMITTED, not the slots in the payload, so a
-    record the parser drops cannot shift every later position (§24).
+    record the parser drops cannot shift every later position.
     """
     cat = catalog_record(text)
     if cat is None or cat.get("error"):

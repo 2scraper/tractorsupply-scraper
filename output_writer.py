@@ -5,7 +5,7 @@ Row model + JSON/CSV writers shared by all three engines.
 
 Both modes (`category`, `search`) produce the family's `Product` row. Its
 first sixteen columns are byte-identical, in order, to every shop scraper in
-this family (CLAUDE.md §9), so a consumer reading several of these repos
+this family, so a consumer reading several of these repos
 reads the same prefix. Everything tractorsupply-specific is appended after
 `price_source`.
 """
@@ -202,7 +202,7 @@ def _atomic(path: str, newline: Optional[str] = None):
         # from woolworths-scraper, which took it from hackernews-scraper — the first version
         # written here used a flat `0o644 & ~umask`, which quietly narrows
         # 0664 to 0644 under umask 002 and clobbers a deliberately tightened
-        # file (§16: lift the sibling's fix, do not invent a second one).
+        # file. Lift a sibling's fix; do not invent a second one.
         try:
             mode = os.stat(path).st_mode & 0o777
         except OSError:

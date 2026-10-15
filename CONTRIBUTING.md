@@ -88,9 +88,10 @@ history needs a decision, not a red check on every push.
 Then the rest of the presentation, in the order that matters:
 
 1. `python3 smoke_test.py` green, and the canary dispatched at least once
-   with a fresh `TRACTORSUPPLY_CDP_ENDPOINT` secret, AND once without it, to
-   confirm the skip path runs too (CLAUDE.md §11). It also runs
-   on a weekly schedule; it goes red with a 401 when the endpoint expires.
+   with a fresh `TRACTORSUPPLY_CDP_ENDPOINT` secret. Without the secret it
+   fails with an error naming it, because a canary that never reached the
+   site has tested nothing. It also runs on a weekly schedule; it goes red
+   with a 401 when the endpoint expires.
 2. The repo description, homepage and topics set (see the family notes on
    what those should say).
 3. Only then the row in the org profile README — and check it with an

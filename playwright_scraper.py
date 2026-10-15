@@ -73,7 +73,7 @@ logger = logging.getLogger("playwright_scraper")
 
 
 # Chromium's own names for a proxy that could not be used. Distinguished
-# from a timeout because the two want opposite responses (CLAUDE.md §8).
+# from a timeout because the two want opposite responses.
 _PROXY_ERROR_MARKERS = (
     "ERR_PROXY_CONNECTION_FAILED",
     "ERR_TUNNEL_CONNECTION_FAILED",
@@ -87,11 +87,11 @@ _PROXY_ERROR_MARKERS = (
 
 # The fetch() every request goes through. It is handed to `page.evaluate` as
 # a FUNCTION, which Playwright sends through `Runtime.callFunctionOn` rather
-# than evaluating a string, so it works under any Content-Security-Policy
-# (§18). The headers are the request's own (the search endpoint refuses a
+# than evaluating a string, so it works under any Content-Security-Policy.
+# The headers are the request's own (the search endpoint refuses a
 # request without `channel`, and fails under HTTP 200 without the right
 # `zoneid`). The AbortController is the timeout: a browser fetch() has none
-# of its own, and §8 requires every remote call to be bounded.
+# of its own, and every remote call this repo makes is bounded.
 FETCH_JS = """
 async ([url, method, body, headersJson, timeoutMs]) => {
   const ctl = new AbortController();
@@ -115,7 +115,7 @@ async ([url, method, body, headersJson, timeoutMs]) => {
 
 
 def _chrome_ua(chromium_version: str) -> str:
-    """A desktop-Chrome UA naming the browser's OWN real version (§8)."""
+    """A desktop-Chrome UA naming the browser's OWN real version."""
     return (f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             f"(KHTML, like Gecko) Chrome/{chromium_version} Safari/537.36")
 
@@ -134,7 +134,7 @@ def _launch_local(pw, args, pool):
 
     A proxy rotation tears the whole browser down and calls this again:
     cookies a bot manager issued against one exit, replayed from another,
-    are a stronger signal than either address alone (§8).
+    are a stronger signal than either address alone.
     """
     launch_kwargs = {"headless": args.headless}
     proxy = to_playwright(pool.current) if pool else None
@@ -262,7 +262,7 @@ def _connect_remote(pw, args):
             break
     if browser is None:
         # The endpoint carries a password, and Playwright repeats it five
-        # times in its error text (§8). Rewritten with it masked, keeping
+        # times in its error text. Rewritten with it masked, keeping
         # host and port, which are the useful half.
         raise PWError(
             f"could not connect to --cdp-endpoint "
@@ -276,7 +276,7 @@ def _connect_remote(pw, args):
 
 # Every `scheme://user:pass@` in a string, however many times it occurs.
 # Matching GLOBALLY is the point: a Playwright connection error repeats the
-# endpoint five times (§8).
+# endpoint five times.
 _CREDENTIALS_IN_URL_RE = re.compile(r"([a-z][a-z0-9+.\-]*://)[^\s/@]+:[^\s/@]+@",
                                     re.IGNORECASE)
 
@@ -291,7 +291,7 @@ def _fetch_pages_concurrently(args, pool, query: Query, page_nums, concurrency: 
 
     Each worker owns its own Playwright instance, browser and exit: with the
     sync API a browser belongs to the thread that made it, so sharing one is
-    not an option even in principle (§7). The page loop itself is
+    not an option even in principle. The page loop itself is
     page_flow.worker_loop, shared by all three engines.
     """
     work = queue.Queue()
@@ -375,17 +375,17 @@ def parse_args(argv=None):
                    help="US ZIP code whose nearby stores the prices and stock "
                         "are for (default %s, Brentwood TN). Prices differ "
                         "between stores." % DEFAULT_ZIP)
-    p.add_argument("--page-size", type=int, default=None,
+    p.add_argument("--page-size", type=page_flow.page_size_flag, default=None,
                    help="Products per request (default 48, as the site's own "
                         "grid; at most %d, which the endpoint enforces)."
                         % MAX_PAGE_SIZE)
-    p.add_argument("--pages", type=int, default=1,
+    p.add_argument("--pages", type=page_flow.page_count, default=1,
                    help="Pages to fetch. Planned against the total the site "
                         "states on page 1, so asking for more than exist "
                         "fetches all of them.")
-    p.add_argument("--delay", type=float, default=1.0,
+    p.add_argument("--delay", type=page_flow.delay_seconds, default=1.0,
                    help="Delay between pages, seconds (default %(default)s)")
-    p.add_argument("--concurrency", type=int, default=1, metavar="N",
+    p.add_argument("--concurrency", type=page_flow.workers, default=1, metavar="N",
                    help="Fetch pages through N parallel workers (default 1). "
                         "Each worker runs its own browser and holds its own "
                         "proxy exit. Ignored with --cdp-endpoint.")
@@ -393,7 +393,7 @@ def parse_args(argv=None):
                    help="Attempts per request on a transport failure (default "
                         "3). The pause doubles each time. A request the "
                         "endpoint REFUSED is not retried.")
-    p.add_argument("--retry-delay", type=float, default=2.0,
+    p.add_argument("--retry-delay", type=page_flow.retry_delay_seconds, default=2.0,
                    help="Seconds before the first retry, doubling thereafter.")
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
     p.add_argument("--out", default="tractorsupply_products", help="Output file prefix")
@@ -410,7 +410,7 @@ def parse_args(argv=None):
                         "per-page: a new exit, and a fresh browser, per page.")
     p.add_argument("--proxy-shuffle", action="store_true",
                    help="Shuffle the pool at startup.")
-    p.add_argument("--proxy-block-retries", type=int, default=2,
+    p.add_argument("--proxy-block-retries", type=page_flow.block_retry_count, default=2,
                    help="When a request is refused (Akamai), retry it from this "
                         "many OTHER exits (default 2). Needs a pool of more "
                         "than one.")

@@ -2,7 +2,7 @@
 page_flow.py
 ------------
 The retry / blocked decision, as DATA rather than as three copies of an
-if-chain (CLAUDE.md §1), and the one fetch loop all three engines share.
+if-chain, and the one fetch loop all three engines share.
 
 tractorsupply.com's search endpoint answers one of this repo's requests in
 six ways, and they want five different responses:
@@ -23,8 +23,8 @@ Three copies of that triage across three engines would drift, and the drift
 would be silent: one engine reporting exit 3 where its twin reports exit 0
 on the same response.
 
-Nothing here imports a browser, and **no JavaScript crosses this boundary**
-(§1). Each engine spells its fetch() in its own driver's dialect.
+Nothing here imports a browser, and **no JavaScript crosses this
+boundary**. Each engine spells its fetch() in its own driver's dialect.
 
 There is no captcha path. Every refusal this repo met on tractorsupply.com
 (curl, Chromium headless and headful, a residential exit, the Scraper API,
@@ -40,7 +40,8 @@ from output_writer import dedupe_by_key, finish_run, SOURCE_DEFAULT
 from product_parser import (BASE, DEFAULT_PAGE_SIZE, DEFAULT_SORT, DEFAULT_ZIP,
                             MAX_PAGES, ORIGIN_URL, Query, api_error,
                             category_details, category_page_request,
-                            detect_document_state, detect_page_state,
+                            count_rows, detect_document_state,
+                            detect_page_state,
                             pages_available, parse_page, parse_store_set,
                             query_from_url, relevance_share, request_for,
                             search_redirect, store_request, total_results)
@@ -55,8 +56,8 @@ log = logging.getLogger("page_flow")
 # How long one fetch() may take before the engine gives up on it. The
 # largest response measured was 315 KB (48 search results with their
 # inventory), which arrived in about a second. The bound exists because a
-# browser fetch() has no timeout of its own, and §8 requires every remote
-# call to have one.
+# browser fetch() has no timeout of its own, and every remote call this
+# repo makes has one.
 FETCH_TIMEOUT_MS = 45_000
 
 # How long to wait at the SAME exit after a 429 before trying again. Not
@@ -77,7 +78,7 @@ def classify(html: Optional[str], status: Optional[int] = None,
     The argument ORDER is the contract: every engine calls
     `classify(html, status, url, waf_action)`. A sibling repo shipped
     `classify(html, url=...)` in two of three engines against a callee that
-    took `status` second, and both crashed on their first fetch (§17).
+    took `status` second, and both crashed on their first fetch.
     `smoke_test.py` binds every engine's call against this signature.
     """
     return detect_page_state(html or "", status, url, waf_action)
@@ -107,7 +108,7 @@ STATE_POLICY = {
     "challenge":  {"retry": True,  "blocked": True,  "parse": False},
     # 429. Not observed. The retry happens at the same exit after a wait
     # (THROTTLE_*), and it is NOT counted as blocked: calling a throttle a
-    # block reports exit 3 for a page that was about to come back (§24).
+    # block reports exit 3 for a page that was about to come back.
     "throttled":  {"retry": True,  "blocked": False, "parse": False},
     # Akamai's Access Denied. It was the answer to every client but one
     # (module docstring of product_parser), so a re-fetch from the same
@@ -134,7 +135,7 @@ def should_parse(state: str) -> bool:
 
 
 # Whether a blocked page is worth re-fetching at all. CONSULTED by the loop
-# below, so setting it False really does stop the retry (§17).
+# below, so setting it False really does stop the retry.
 RETRY_ON_BLOCKED = True
 
 # How many times to re-fetch a refused page when there is no proxy pool to
@@ -168,7 +169,7 @@ def concurrency_limit(cdp_endpoint: Optional[str]) -> Optional[int]:
 
     The Scraping Browser API allows ONE live connection per profile, so N
     workers sharing a `pid` collide with `profile_locked`. Several `pid`s,
-    one run each, is the way to parallelise that path (§7).
+    one run each, is the way to parallelise that path.
     """
     return 1 if cdp_endpoint else None
 
@@ -229,6 +230,8 @@ def access_warning(args) -> Optional[str]:
 
 def stop_reason_for(outcome) -> str:
     """The run's stop_reason when `outcome` is the page that ended it."""
+    if getattr(outcome, "unread", False):
+        return "parser_found_nothing"
     if getattr(outcome, "rejected", None):
         return "api_rejected"
     if getattr(outcome, "blocked_by", None):
@@ -253,14 +256,14 @@ def build_query(args, error: Callable[[str], None]) -> Query:
 
     --url and --category/--search are two ways to name the listing. Typing
     both would scrape something neither of them named if they disagreed, so
-    the combination is refused rather than merged (the family's --country
-    rule, §10). `error` is argparse's `p.error`, so a refusal is exit 2 with
+    the combination is refused rather than merged. `error` is argparse's `p.error`, so a refusal is exit 2 with
     the usage line, as in every engine.
     """
     typed = [flag for dest, flag in LISTING_FLAGS if getattr(args, dest, None)]
     if typed and args.url and getattr(args, "url_from_env", False):
         # TRACTORSUPPLY_URL is a default, and a flag the user typed beats a
-        # default (§3's precedence) rather than colliding with it.
+        # default (typed flag, then environment, then .env, then built-in
+        # default) rather than colliding with it.
         log.info("Ignoring TRACTORSUPPLY_URL: %s names the listing.", typed[0])
         args.url = None
     if args.url:
@@ -283,7 +286,8 @@ def build_query(args, error: Callable[[str], None]) -> Query:
         error("--mode %s disagrees with the listing, which is a %s."
               % (args.mode, query.mode))
     query.sort = args.sort or DEFAULT_SORT
-    query.page_size = args.page_size or DEFAULT_PAGE_SIZE
+    query.page_size = (DEFAULT_PAGE_SIZE if args.page_size is None
+                       else args.page_size)
     query.zip_code = (args.zip or DEFAULT_ZIP).strip()
     why = query.validate()
     if why:
@@ -315,7 +319,7 @@ def finish(args, query: Query, outcomes: List, stop_reason: str,
     """Merge the pages in PAGE order, write the output, return the exit code.
 
     One implementation for the three engines, so the merge order, the
-    dedupe and the sidecar cannot differ between them (§6).
+    dedupe and the sidecar cannot differ between them.
     """
     rows, seen, dropped = [], set(), 0
     for oc in sorted(outcomes, key=lambda o: o.page_num):
@@ -341,7 +345,7 @@ def finish(args, query: Query, outcomes: List, stop_reason: str,
     # Dedupe sees a product fetched twice; it cannot see one that moved past
     # a page boundary and was never fetched (audit 2026-10-08). Where the run
     # read EVERY page of the listing, that gap is arithmetic against the
-    # site's own count (CLAUDE.md §8), and it is honest: two full category
+    # site's own count, and it is honest: two full category
     # runs measured 270 of 270 and 36 of 36, so a non-zero here is the
     # listing moving, not noise. On a slice of a listing nothing can be
     # said, and the field is left out rather than guessed.
@@ -373,7 +377,7 @@ def finish(args, query: Query, outcomes: List, stop_reason: str,
 # origin, resolving the query, retrying a transport failure, waiting out a
 # throttle, rotating on a refusal, and parsing what came back. The three
 # engines differ only in HOW they ask their driver, so each passes in an
-# object with these operations and no JavaScript crosses this boundary (§1):
+# object with these operations and no JavaScript crosses this boundary:
 #
 #     ops.goto(url)        -> (status, waf_header). Raises TransportError.
 #     ops.document_text()  -> the current document's markup
@@ -384,7 +388,7 @@ def finish(args, query: Query, outcomes: List, stop_reason: str,
 #     ops.proxy_failure(text) -> the driver's proxy-error name in text, or ""
 #
 # One copy is how the family rule that the three engines agree on exit codes
-# (§6) holds by construction rather than by discipline.
+# holds by construction rather than by discipline.
 
 
 class TransportError(Exception):
@@ -397,7 +401,7 @@ class PageOutcome:
 
     Collected per page and merged afterwards, in page order, rather than
     folded into shared state as the loop goes, so the output cannot depend
-    on which page happened to finish first (§8).
+    on which page happened to finish first.
     """
     page_num: int
     url: str
@@ -415,11 +419,15 @@ class PageOutcome:
     pages_available: Optional[int] = None
     # Where the site sent a search instead of answering it (search_redirect).
     redirect: Optional[str] = None
+    # The response says this page holds rows (its own total, or entries in
+    # the payload) and the parser read none: the payload's shape has moved.
+    # A failure, never "the listing ended" (see _unread).
+    unread: bool = False
 
     @property
     def ok(self) -> bool:
         return (not self.load_failed and self.blocked_by is None
-                and self.rejected is None)
+                and self.rejected is None and not self.unread)
 
 
 # The columns the endpoint filled on EVERY record of every capture (249
@@ -460,8 +468,29 @@ def _core_field_warnings(rows: List, page_num: int) -> None:
                         "--dump-html.", share, page_num, name, CORE_FIELD_FLOOR)
 
 
+def _unread(rows: List, total: Optional[int], pages: Optional[int],
+            page_num: int, entries: int = 0) -> bool:
+    """True when the response says this page holds rows and none were read.
+
+    A page past the end of a listing holds none and says so by arithmetic:
+    its own `resultsFound` puts it beyond the last page. A page INSIDE that
+    range with zero rows is the parser failing to find them. Reported as an
+    empty page it was exit 4 on page 1 and `status: complete` on a later
+    page, on a listing the same response counted 37 products in (measured by
+    renaming `partNumber`, and `catalogEntryView`, in the real fixtures).
+    The total is read from THIS page, so a listing that genuinely shrank
+    during the run still ends as end_of_listing. Entries in the payload that
+    all failed to parse are the same failure, whatever the total says.
+    """
+    if rows:
+        return False
+    if entries:
+        return True
+    return bool(total) and pages is not None and page_num <= pages
+
+
 def _dump(args, page_num: int, text: str) -> None:
-    """Write the exact response the parser was given, on success too (§9)."""
+    """Write the exact response the parser was given, on success too."""
     if not args.dump_html:
         return
     path = args.dump_html if args.pages == 1 else f"{args.dump_html}.page{page_num}"
@@ -545,7 +574,7 @@ def fetch_one_page(ops, args, pool, query: Query, page_num: int,
                     ops.landed = False
             if state == "throttled" and throttles < THROTTLE_RETRIES:
                 throttles += 1
-                attempt -= 1  # a throttle wait spends its own budget (§24)
+                attempt -= 1  # a throttle wait spends its own budget
                 pause = THROTTLE_WAIT_S * throttles
                 log.warning("Rate-limited on %s (HTTP 429) — waiting %.0fs at "
                             "the same exit (%d/%d).", req.label, pause,
@@ -628,6 +657,15 @@ def fetch_listing_page(ops, args, pool, query: Query, page_num: int,
         log.info("The site reports %d match(es) — %s page(s) of %d.",
                  outcome.total_available, outcome.pages_available, query.page_size)
     _core_field_warnings(rows, page_num)
+    if _unread(rows, outcome.total_available, outcome.pages_available,
+               page_num, count_rows(text)):
+        outcome.unread = True
+        debug = _save_debug(args, page_num, text)
+        log.error("Page %d was served, and the response says it holds rows "
+                  "(the site counts %s match(es)), but none were read — the "
+                  "payload's shape has moved. Saved to %s. This is NOT an "
+                  "empty listing; open an issue with that file.", page_num,
+                  outcome.total_available, debug)
     return outcome
 
 
@@ -773,7 +811,7 @@ def run_pages(open_ops, close_ops, run_concurrently, args, pool,
                           failed.blocked_by is not None)
 
         # Page 1 is always fetched alone: its total decides how many pages
-        # there are to address (§7).
+        # there are to address.
         first = fetch_listing_page(ops, args, pool, query, 1, mask)
         if query.mode == "search" and first.ok and first.redirect:
             # The site does not search this keyword; it sends it to a page.
@@ -918,7 +956,7 @@ def worker_pool(pool, worker_index: int):
     """A private ProxyPool for one worker, starting at a different exit.
 
     Workers start on distinct exits and share no mutable state, so rotation
-    needs no lock (§7).
+    needs no lock.
     """
     if not pool:
         return None
@@ -936,8 +974,8 @@ def cdp_connect_hint(error_text: str) -> str:
     """
     if "401" in (error_text or ""):
         return ("HTTP 401: the endpoint's credentials were refused. A Scraping "
-                "Browser profile's credentials expire (from about a day to "
-                "over ten days, measured), so an "
+                "Browser profile's credentials expire (one here was still "
+                "served 14 days after it was issued), so an "
                 "endpoint copied from an older .env may have expired. "
                 "Get a fresh one from your 2Captcha dashboard.")
     return ("A Scraping Browser profile allows ONE live connection at a time, "
@@ -1012,3 +1050,65 @@ def attempts(value) -> int:
             f"With 0 the load loop never runs, nothing is fetched, and the "
             f"engine reports the browser's blank page as a result.")
     return number
+
+
+# ---------------------------------------------------------------------------
+# The other numeric flags
+# ---------------------------------------------------------------------------
+#
+# Each is an argparse `type=`, so a value the run cannot honour is exit 2
+# with the flag named, before anything is fetched. Without them,
+# `--proxy-block-retries -1` made the block loop `range(0)` and the run sent
+# no request at all, then reported exit 5; `--page-size 0` became 48 with no
+# message; a negative delay reached the driver's wait.
+
+def _number(value, flag: str, kind, minimum, maximum=None, why: str = ""):
+    try:
+        number = kind(value)
+    except (TypeError, ValueError):
+        raise _argparse.ArgumentTypeError(
+            f"{flag} must be {'an integer' if kind is int else 'a number'}, "
+            f"not {value!r}")
+    out_of_range = (number != number or number == float("inf")
+                    or number < minimum
+                    or (maximum is not None and number > maximum))
+    if out_of_range:
+        bound = (f"between {minimum} and {maximum}" if maximum is not None
+                 else f"at least {minimum}")
+        raise _argparse.ArgumentTypeError(
+            f"{flag} must be {bound}, not {value}.{(' ' + why) if why else ''}")
+    return number
+
+
+def block_retry_count(value) -> int:
+    """argparse `type=` for --proxy-block-retries: 0 or more."""
+    return _number(value, "--proxy-block-retries", int, 0,
+                   why="It counts OTHER exits to retry a refused request from; "
+                       "0 means none.")
+
+
+def page_count(value) -> int:
+    """argparse `type=` for --pages: 1 or more."""
+    return _number(value, "--pages", int, 1)
+
+
+def page_size_flag(value) -> int:
+    """argparse `type=` for --page-size: 1 to the endpoint's own maximum."""
+    from product_parser import MAX_PAGE_SIZE
+    return _number(value, "--page-size", int, 1, MAX_PAGE_SIZE,
+                   why="The endpoint refuses a larger page with HTTP 400.")
+
+
+def workers(value) -> int:
+    """argparse `type=` for --concurrency: 1 or more."""
+    return _number(value, "--concurrency", int, 1)
+
+
+def delay_seconds(value) -> float:
+    """argparse `type=` for --delay: 0 or more seconds."""
+    return _number(value, "--delay", float, 0)
+
+
+def retry_delay_seconds(value) -> float:
+    """argparse `type=` for --retry-delay: 0 or more seconds."""
+    return _number(value, "--retry-delay", float, 0)

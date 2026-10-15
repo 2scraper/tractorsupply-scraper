@@ -45,8 +45,7 @@ from typing import Optional
 # At module level, deliberately, and not inside the launch path. The offline
 # suite guards `import puppeteer_scraper` behind try/except ImportError and
 # REPORTS the skip, and CI's engine-smoke job fails on any reported skip.
-# That only works if importing this module actually requires the driver
-# (CLAUDE.md §10).
+# That only works if importing this module actually requires the driver.
 from pyppeteer import launch, connect
 
 from product_parser import MAX_PAGE_SIZE, MODES, SORTS, DEFAULT_ZIP
@@ -61,11 +60,11 @@ logger = logging.getLogger("puppeteer_scraper")
 
 # Every await in this file goes through the bridge below with a timeout, so a
 # hung remote call ends the operation instead of the run. pyppeteer provides
-# no connect timeout of its own (§8).
+# no connect timeout of its own.
 DEFAULT_OP_TIMEOUT = 120
 CONNECT_TIMEOUT = 30
 
-# Chromium's own names for a proxy that could not be used (§8).
+# Chromium's own names for a proxy that could not be used.
 _PROXY_ERROR_MARKERS = (
     "ERR_PROXY_CONNECTION_FAILED",
     "ERR_TUNNEL_CONNECTION_FAILED",
@@ -79,7 +78,7 @@ _PROXY_ERROR_MARKERS = (
 
 # pyppeteer's dialect of the fetch() in playwright_scraper.FETCH_JS: the
 # arguments arrive POSITIONALLY rather than as one array. Same body, same
-# headers, same return shape, same AbortController timeout (§8).
+# headers, same return shape, same AbortController timeout.
 FETCH_JS = """
 async (url, method, body, headersJson, timeoutMs) => {
   const ctl = new AbortController();
@@ -169,7 +168,7 @@ class _AsyncBridge:
         self._thread.join(timeout=5)
 
 
-# Every `scheme://user:pass@` in a string, however many times it occurs (§8).
+# Every `scheme://user:pass@` in a string, however many times it occurs.
 _CREDENTIALS_IN_URL_RE = re.compile(r"([a-z][a-z0-9+.\-]*://)[^\s/@]+:[^\s/@]+@",
                                     re.IGNORECASE)
 
@@ -180,7 +179,7 @@ def _mask_credentials(text: str) -> str:
 
 
 def _chrome_ua(version: str) -> str:
-    """A desktop-Chrome UA naming the browser's OWN real version (§8).
+    """A desktop-Chrome UA naming the browser's OWN real version.
     pyppeteer's `browser.version()` returns "HeadlessChrome/115.0.0.0"."""
     number = version.split("/")[-1] if "/" in version else version
     return (f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -199,7 +198,7 @@ class _Ops:
     """One pyppeteer browser + page, exposed as page_flow's named operations.
 
     Same contract as playwright_scraper._Ops, including the rule that a
-    rotation means a genuinely FRESH browser (§8).
+    rotation means a genuinely FRESH browser.
     """
 
     def __init__(self, bridge: _AsyncBridge, args, pool):
@@ -258,7 +257,7 @@ class _Ops:
             exit_url = self.pool.current
             # Credentials are answered through CDP, never put on the command
             # line: --proxy-server= is part of the browser's argv, readable
-            # by anything that can run `ps` (§8).
+            # by anything that can run `ps`.
             scrubbed, credentials = split_credentials(exit_url)
             launch_args.append(f"--proxy-server={scrubbed}")
             logger.info("Using proxy exit %s", mask(exit_url))
@@ -290,7 +289,7 @@ class _Ops:
 
         Every request is paused and continued unchanged; only an auth
         challenge whose source is the PROXY is answered, with credentials
-        that never leave this process's memory (§8).
+        that never leave this process's memory.
         """
         async def _enable():
             session = await self.page.target.createCDPSession()
@@ -320,10 +319,13 @@ class _Ops:
     def _apply_fingerprint(self):
         """The SAME init script the other two engines install, so no engine
         applies a different half of one fingerprint."""
-        from fingerprint_client import get_fingerprint, playwright_init_script
+        from fingerprint_client import (fingerprint_user_agent, get_fingerprint,
+                                        playwright_init_script)
         fp = get_fingerprint(self.args.twocaptcha_key, tags=self.args.fp_tags,
                              country=self.args.fp_country)
-        ua = (fp.get("userAgent") or {}).get("value")
+        # The shared reader: the response keeps the UA at userAgent.userAgent
+        # (chromium format) or data.ua (raw), never at userAgent.value.
+        ua = fingerprint_user_agent(fp)
         try:
             if ua:
                 self.bridge.run(self.page.setUserAgent(ua))
@@ -484,17 +486,17 @@ def parse_args(argv=None):
                    help="US ZIP code whose nearby stores the prices and stock "
                         "are for (default %s, Brentwood TN). Prices differ "
                         "between stores." % DEFAULT_ZIP)
-    p.add_argument("--page-size", type=int, default=None,
+    p.add_argument("--page-size", type=page_flow.page_size_flag, default=None,
                    help="Products per request (default 48, as the site's own "
                         "grid; at most %d, which the endpoint enforces)."
                         % MAX_PAGE_SIZE)
-    p.add_argument("--pages", type=int, default=1,
+    p.add_argument("--pages", type=page_flow.page_count, default=1,
                    help="Pages to fetch. Planned against the total the site "
                         "states on page 1, so asking for more than exist "
                         "fetches all of them.")
-    p.add_argument("--delay", type=float, default=1.0,
+    p.add_argument("--delay", type=page_flow.delay_seconds, default=1.0,
                    help="Delay between pages, seconds (default %(default)s)")
-    p.add_argument("--concurrency", type=int, default=1, metavar="N",
+    p.add_argument("--concurrency", type=page_flow.workers, default=1, metavar="N",
                    help="Fetch pages through N parallel workers (default 1). "
                         "Each worker runs its own browser and holds its own "
                         "proxy exit. Ignored with --cdp-endpoint.")
@@ -502,7 +504,7 @@ def parse_args(argv=None):
                    help="Attempts per request on a transport failure (default "
                         "3). The pause doubles each time. A request the "
                         "endpoint REFUSED is not retried.")
-    p.add_argument("--retry-delay", type=float, default=2.0,
+    p.add_argument("--retry-delay", type=page_flow.retry_delay_seconds, default=2.0,
                    help="Seconds before the first retry, doubling thereafter.")
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
     p.add_argument("--out", default="tractorsupply_products", help="Output file prefix")
@@ -519,7 +521,7 @@ def parse_args(argv=None):
                         "per-page: a new exit, and a fresh browser, per page.")
     p.add_argument("--proxy-shuffle", action="store_true",
                    help="Shuffle the pool at startup.")
-    p.add_argument("--proxy-block-retries", type=int, default=2,
+    p.add_argument("--proxy-block-retries", type=page_flow.block_retry_count, default=2,
                    help="When a request is refused (Akamai), retry it from this "
                         "many OTHER exits (default 2). Needs a pool of more "
                         "than one.")

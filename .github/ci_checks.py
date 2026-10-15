@@ -87,8 +87,8 @@ HEX32 = re.compile(r"\b[0-9a-f]{32}\b")
 # and make_fixtures.py replaces the hex-shaped values a captured page
 # carries (Akamai and analytics cookies echoed into the markup, session
 # ids) with non-hex placeholders. So a bare 32-hex anywhere in the working
-# tree fails, with no exemption to reason about (CLAUDE.md §24: "before
-# adding an exemption, check whether the value is needed at all").
+# tree fails, with no exemption to reason about (before adding an
+# exemption, check whether the value is needed at all).
 SITE_PUBLIC_IDS = ()
 
 def _without_site_ids(line):
@@ -124,7 +124,7 @@ HEX32_ALLOWED = ("sha", "hash", "nonce", "example", "md5", "digest",
 # file here, generated or not, is exempt. Every fixture passes through
 # make_fixtures.py, which replaces the hex-shaped values a captured
 # response carries before it is written, so the strictest rule can cover
-# the biggest files, the ones nobody reads line by line (CLAUDE.md §24).
+# the biggest files, the ones nobody reads line by line.
 GENERATED_DATA_FILES = ()
 
 # A secret sitting in a field named like one. This is what the bare-hex rule
@@ -259,7 +259,7 @@ def tracked_files():
 # into pip's vendored code and flags a 32-hex string in `_elffile.py` as
 # key-shaped. Correct about the string, wrong about the file — and it is the
 # FIRST thing a new user sees from `python3 smoke_test.py`. A guard people
-# have to argue with is one they learn to suppress (CLAUDE.md §22).
+# have to argue with is one they learn to suppress.
 #
 # Deliberately NOT a narrowing of what gets scanned: an untracked file is
 # still read, because a key pasted into a scratch file beside the scripts is
