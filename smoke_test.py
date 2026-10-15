@@ -137,7 +137,7 @@ def check_fixture_corpus_is_real_and_scrubbed():
 
 
 # ---------------------------------------------------------------------------
-# The parser, asserted on VALUES rather than on coverage (§10)
+# The parser, asserted on VALUES rather than on coverage
 # ---------------------------------------------------------------------------
 
 def check_a_category_page_parses_to_the_captured_values():
@@ -213,7 +213,7 @@ def check_values_the_site_did_not_state_stay_null():
     e = copy.deepcopy(P._entries(P.catalog_record(fx("cat_p1")))[2])
     e["xf_prdRating"] = 0
     row = P.parse_entry(e, q, {}, page=1, position=1)
-    equal("a 0 rating with no reviews is 'unreviewed', not a grade (§21)", row.rating, None)
+    equal("a 0 rating with no reviews is 'unreviewed', not a grade", row.rating, None)
     e = copy.deepcopy(P._entries(P.catalog_record(fx("cat_p1")))[0])
     e["offerPriceMin"] = e["offerPriceMax"] = None
     e.pop("displayPrice", None)
@@ -374,7 +374,7 @@ def check_the_query_is_validated_up_front():
         check("refused: %r (%s)" % (kw, reason), q is None and why and reason in why, repr(why))
     q, why = _build(url="https://www.tractorsupply.com/tsc/catalog/x", category="y",
                     url_from_env=True)
-    equal("a TYPED --category beats a TRACTORSUPPLY_URL default (§3)",
+    equal("a TYPED --category beats a TRACTORSUPPLY_URL default",
           (q and q.slug, why), ("y", None))
 
 
@@ -423,7 +423,7 @@ def check_page_states_on_real_captures():
     equal("Akamai's refusal is caught WITHOUT its status (Selenium has none)",
           (F.classify(fx("akamai_raw"), None), F.classify(fx("akamai_dom_cdp"), None)),
           ("blocked", "blocked"))
-    check("the raw refusal is entity-escaped and still caught (§20: both encodings)",
+    check("the raw refusal is entity-escaped and still caught (both encodings)",
           "errors&#46;edgesuite" in fx("akamai_raw") and "errors.edgesuite.net" in fx("akamai_dom_cdp"))
     equal("the landing and the pages are documents the site served",
           [P.detect_document_state(fx(n), 200) for n in
@@ -437,7 +437,7 @@ def check_page_states_on_real_captures():
 
 
 def check_markers_do_not_match_a_page_the_scraping_browser_served():
-    """§24: commit a fixture fetched over CDP and assert the marker set
+    """Commit a fixture fetched over CDP and assert the marker set
     scores zero on it — WITHOUT any extension strip, because there is none."""
     import product_parser as P
     landing = fx("landing_cdp")
@@ -465,7 +465,7 @@ def check_state_policy():
           and not F.should_parse("rejected"))
     check("missing: not retried, not blocked", not F.should_retry("missing")
           and not F.counts_as_blocked("missing"))
-    check("throttled: retried, NOT blocked (§24)",
+    check("throttled: retried, NOT blocked",
           F.should_retry("throttled") and not F.counts_as_blocked("throttled"))
     check("blocked and challenge: retried and blocked",
           all(F.should_retry(s) and F.counts_as_blocked(s) for s in ("blocked", "challenge")))
@@ -485,7 +485,7 @@ def check_state_policy():
 
 
 def check_policy_constants_have_a_consumer():
-    """§17: a policy constant nothing reads is the same defect as dead code."""
+    """A policy constant nothing reads is the same defect as dead code."""
     src = open(os.path.join(HERE, "page_flow.py"), encoding="utf-8").read()
     engines = "".join(open(os.path.join(HERE, m + ".py"), encoding="utf-8").read()
                       for m in ENGINES)
@@ -632,7 +632,7 @@ def check_the_shared_loop_end_to_end():
     rc, meta, rows, ops = _run(_FakeOps(search={1: [(429, ""), (200, fx("cat_p1"))]}),
                                pages=1, retries=1)
     equal("a throttle, then the page, with --retries 1: exit 0 — a throttle wait "
-          "spends its OWN budget (§24)", rc, 0)
+          "spends its OWN budget", rc, 0)
     equal("...at the SAME exit (no relaunch)", ops.relaunches, 0)
 
     rc, meta, rows, ops = _run(_FakeOps(stores=(200, fx("stores_99501"))))
@@ -662,15 +662,64 @@ def check_the_shared_loop_end_to_end():
     equal("...and no category page is fetched for a search", ops.fetches, ["stores", 1])
 
 
+def _shrunk(name, total):
+    """A real capture whose own `resultsFound` is edited to `total`: the
+    answer of a listing that shrank between page 1 and this page."""
+    text = fx(name)
+    check("the fixture states the total being edited (not vacuous)",
+          '"resultsFound": 37' in text)
+    return text.replace('"resultsFound": 37', '"resultsFound": %d' % total)
+
+
 def check_a_listing_that_ends_early_is_complete():
-    ops = _FakeOps(search={1: [(200, fx("cat_p1"))], 2: [(200, fx("cat_past_end"))]})
+    # cat_past_end is the site's real page 99 of a 37-product listing. Its
+    # own total (37 at 24 = 2 pages) puts page 2 INSIDE the listing, so to
+    # play "the listing shrank to one page", its total is edited to 20.
+    ops = _FakeOps(search={1: [(200, fx("cat_p1"))],
+                           2: [(200, _shrunk("cat_past_end", 20))]})
     rc, meta, rows, ops = _run(ops, pages=2)
-    equal("an empty page 2 of a planned 2 ends the run: exit 0", rc, 0)
+    equal("an empty page 2 whose own total now ends at page 1: exit 0", rc, 0)
     equal("...as complete, stopped on the DATA",
           (meta["status"], meta["stop_reason"]), ("complete", "end_of_listing"))
     ops = _FakeOps(search={1: [(200, fx("cat_p1"))], 2: [(200, fx("cat_p1"))]})
     rc, meta, rows, ops = _run(ops, pages=2)
     equal("the same products on two pages (a listing moving) are kept once", len(rows), 4)
+
+
+def _renamed(name, old, new):
+    text = fx(name)
+    check("the fixture carries %s (not vacuous)" % old, old in text)
+    return text.replace(old, new)
+
+
+def check_a_page_that_states_rows_but_parses_none_is_a_parser_failure():
+    """A served response whose own count puts rows on the page, parsed to
+    none, is the payload's shape moving. It was exit 4 ("the listing is
+    empty") on page 1 and exit 0 `complete` on page 2 — both false."""
+    ids = ('"partNumber"', '"partNumberX"')
+    box = ('"catalogEntryView"', '"catalogEntryViewX"')
+    for what, (old, new) in (("ids renamed", ids), ("container renamed", box)):
+        rc, meta, rows, _ = _run(_FakeOps(search={1: [(200, _renamed("cat_p1", old, new))]}),
+                                 pages=2)
+        equal("page 1 with its %s: exit 5, NOT 4 (empty)" % what, (rc, rows), (5, None))
+        ops = _FakeOps(search={1: [(200, fx("cat_p1"))],
+                               2: [(200, _renamed("cat_p2", old, new))]})
+        rc, meta, rows, _ = _run(ops, pages=2)
+        equal("page 2 with its %s: exit 6, partial, parser_found_nothing" % what,
+              (rc, meta and meta["status"], meta and meta["stop_reason"],
+               meta and meta["pages_failed"]),
+              (6, "partial", "parser_found_nothing", [2]))
+    # The real page-past-the-end capture, served as page 2 of a listing its
+    # own total says has 2 pages: inside the listing, so not the end of it.
+    ops = _FakeOps(search={1: [(200, fx("cat_p1"))], 2: [(200, fx("cat_past_end"))]})
+    rc, meta, rows, _ = _run(ops, pages=2)
+    equal("an empty page INSIDE its own stated total: exit 6, parser_found_nothing",
+          (rc, meta["stop_reason"]), (6, "parser_found_nothing"))
+    import page_flow as F
+    equal("...and the same capture as page 99, which its total puts past the end, "
+          "is not a parser failure", F._unread([], 37, 2, 99), False)
+    equal("a genuinely empty listing (total 0) is not a parser failure",
+          F._unread([], 0, 0, 1), False)
 
 
 def check_every_engine_implements_the_operations_page_flow_uses():
@@ -716,7 +765,7 @@ FAMILY_PREFIX = ["source", "scraped_at", "url", "sku", "title", "brand", "price"
 def check_row_schema():
     from output_writer import Product, ROW_CLASS_BY_MODE, UNIQUE_BY_SKU_MODES
     names = [f.name for f in fields(Product)]
-    equal("the family prefix is byte-identical and in order (§9)",
+    equal("the family prefix is byte-identical and in order",
           names[:len(FAMILY_PREFIX)], FAMILY_PREFIX)
     check("page, position, mode and sort follow it",
           names[len(FAMILY_PREFIX):len(FAMILY_PREFIX) + 4] == ["page", "position", "mode", "sort"])
@@ -727,7 +776,7 @@ def check_row_schema():
 
 
 def check_every_column_is_populated_somewhere():
-    """§9: a column that is null on every row of every run should not exist.
+    """A column that is null on every row of every run should not exist.
     Checked against the fixtures, which were chosen to cover the cases."""
     from output_writer import Product
     rows = []
@@ -764,7 +813,7 @@ def check_exit_codes():
     equal("3 blocked / 4 empty / 5 never obtained / 6 partial",
           (O.EXIT_BLOCKED, O.EXIT_NO_PRODUCTS, O.EXIT_FETCH_FAILED, O.EXIT_PARTIAL),
           (3, 4, 5, 6))
-    check("end_of_listing is a COMPLETE stop reason (§24)",
+    check("end_of_listing is a COMPLETE stop reason",
           "end_of_listing" in O.COMPLETE_STOP_REASONS)
     check("api_rejected is NOT complete", "api_rejected" not in O.COMPLETE_STOP_REASONS)
 
@@ -825,7 +874,7 @@ def check_sidecar_shape():
 
 
 # ---------------------------------------------------------------------------
-# The engines — the checks CLAUDE.md §17 says to steal
+# The engines — checks against the shared code and against each other
 # ---------------------------------------------------------------------------
 
 def check_engines_import_their_driver_at_module_level():
@@ -842,9 +891,9 @@ def check_engines_import_their_driver_at_module_level():
 
 
 def check_shared_calls_bind_against_the_real_signature():
-    """§17's check #1. Every call from an engine (and diff_runs and page_flow
+    """Every call from an engine (and diff_runs and page_flow
     itself) into a shared module is bound against the callee's real
-    signature. A name that does not exist FAILS (§22). A name bound in the
+    signature. A name that does not exist FAILS. A name bound in the
     calling file shadows a same-named module."""
     import output_writer
     import page_flow
@@ -922,8 +971,7 @@ def _argparse_flags(module_name):
     return flags
 
 
-# The family's flag contract (CLAUDE.md §9, including the five it omitted
-# for months), minus the three below, plus this repo's own query flags.
+# The family's shared flag contract, minus the three below, plus this repo's own query flags.
 CONTRACT_FLAGS = {
     "--url", "--pages", "--category", "--format", "--out", "--delay",
     "--retries", "--retry-delay", "--concurrency", "--proxy", "--proxy-file",
@@ -936,13 +984,13 @@ SITE_FLAGS = {"--search", "--sort", "--zip", "--page-size"}
 # REMOVED BY DECISION, not forgotten: the solver flags configure a captcha
 # path this repo does not have, because no refusal tractorsupply.com served
 # (19 of them, 2026-09-28) carried a widget. A flag that does nothing looks
-# configurable and is not (§3). Reinstating them is a decision that needs a
+# configurable and is not. Reinstating them is a decision that needs a
 # captcha to solve first, and this check makes it one.
 REMOVED_BY_DECISION = {"--captcha-api", "--solve-captcha", "--min-score"}
 
 
 def check_engine_flag_sets():
-    """§17's check #2: against the contract AND against each other, both
+    """Against the contract AND against each other, both
     ways. The exception list IS the documentation."""
     sets = {m: _argparse_flags(m) for m in ENGINES}
     for module, flags in sets.items():
@@ -976,7 +1024,7 @@ def check_banned_and_removed_flags():
 
 
 def check_undefined_names_in_every_module():
-    """§10: compileall proves a file PARSES, not that its names RESOLVE.
+    """compileall proves a file PARSES, not that its names RESOLVE.
     Kept COARSE (pooled bindings) so it under-reports rather than invents."""
     import builtins
     for filename in sorted(f for f in os.listdir(HERE) if f.endswith(".py")):
@@ -1102,7 +1150,7 @@ def check_credential_scan_is_one_implementation_invoked_from_both():
     script = os.path.join(HERE, ".github", "ci_checks.py")
     if not os.path.isdir(os.path.join(HERE, ".github")):
         # Inside the Docker image, which copies no .github at all. Triggered
-        # by the WHOLE directory being absent, never by one file in it (§22).
+        # by the WHOLE directory being absent, never by one file in it.
         skip("ci_checks", "no .github directory (the image)")
         return
     check("the credential scan exists as a script", os.path.exists(script))
@@ -1131,7 +1179,7 @@ def check_no_workflow_imports_the_code_inline():
 
 
 def check_there_is_no_hex_exemption():
-    """§24: nothing this repo writes is 32-hex, so nothing is exempt, and a
+    """Nothing this repo writes is 32-hex, so nothing is exempt, and a
     hex string in even the most innocent-looking context still fails."""
     if not os.path.isdir(os.path.join(HERE, ".github")):
         skip("ci_checks", "no .github directory (the image)")
@@ -1147,8 +1195,8 @@ def check_there_is_no_hex_exemption():
 
 
 # Assembled from pieces, so this file can be scanned like every other rather
-# than exempted (§22: the file most likely to acquire a stray phrase is the
-# one a wholesale exemption never reads).
+# than exempted: the file most likely to acquire a stray phrase is the one a
+# wholesale exemption never reads.
 BANNED_WORDING = (
     "cloud" + " browser", "anti" + "detect browser", "2scraper " + "Anti" + "detect Browser",
     "gate." + "2prx.com", "ANTI" + "DETECT_LOCAL_API",
@@ -1156,7 +1204,7 @@ BANNED_WORDING = (
 
 
 def check_banned_wording():
-    """§12, enforced by this test rather than by review."""
+    """Public wording rules, enforced by this test rather than by review."""
     scanned = 0
     for root, dirs, files in os.walk(HERE):
         dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache",
@@ -1200,7 +1248,7 @@ def check_no_donor_residue():
 
 
 def check_concurrency_with_the_browser_stubbed():
-    """§10: a live run cannot always reach this machinery. Driven through the
+    """A live run cannot always reach this machinery. Driven through the
     SHARED worker loop with the page fetch replaced."""
     import page_flow
     import queue as queue_mod
@@ -1307,7 +1355,7 @@ def check_fingerprint_kwargs_are_ones_the_driver_accepts():
 
 
 def check_engines_do_not_evaluate_a_string_in_the_browser():
-    """§18: wait_for_function evaluates a string, which a CSP without
+    """wait_for_function evaluates a string, which a CSP without
     unsafe-eval kills. page.evaluate with a real function is fine."""
     for module in ENGINES:
         tree = ast.parse(open(os.path.join(HERE, module + ".py"), encoding="utf-8").read())
@@ -1363,7 +1411,7 @@ def check_pyppeteer_answers_proxy_auth_through_cdp():
 
 
 def check_capability_claims_match_the_code():
-    """§19: the most expensive bug this family can ship is a SENTENCE."""
+    """The most expensive bug this family can ship is a SENTENCE."""
     readme = open(os.path.join(HERE, "README.md"), encoding="utf-8").read()
     low = readme.lower()
     for phrase in ("cannot be solved", "can't be solved", "is not solvable",
@@ -1378,7 +1426,7 @@ def check_capability_claims_match_the_code():
 
 
 def check_readme_numbers_are_not_stale():
-    """§17's check #4: a number the README states about the code is the
+    """A number the README states about the code is the
     code's number."""
     readme = open(os.path.join(HERE, "README.md"), encoding="utf-8").read()
     from output_writer import Product
@@ -1723,6 +1771,130 @@ def _retries_validation_problems():
 def check_retries_is_validated_in_every_entry_point():
     problems = _retries_validation_problems()
     check("--retries is validated in every entry point, so 0 is a usage error", not problems, "; ".join(problems))
+
+
+# Every numeric flag that counts something, with the validator it must use
+# and values it must refuse / accept. Without them `--proxy-block-retries -1`
+# sent no request at all and reported exit 5, and `--page-size 0` silently
+# became 48.
+NUMERIC_FLAGS = {
+    "--proxy-block-retries": ("block_retry_count", (-1, "x"), (0, 2)),
+    "--pages": ("page_count", (0, -1), (1, 5)),
+    "--page-size": ("page_size_flag", (0, -1, 201), (1, 200)),
+    "--concurrency": ("workers", (0, -2), (1, 4)),
+    "--delay": ("delay_seconds", (-1, "nan", "inf"), (0, 1.5)),
+    "--retry-delay": ("retry_delay_seconds", (-0.5,), (0, 2)),
+}
+ENGINE_FILES = ("playwright_scraper.py", "selenium_scraper.py", "puppeteer_scraper.py")
+
+
+def check_numeric_flags_are_validated_in_every_engine():
+    import argparse as _ap
+    import page_flow as pf
+    problems = []
+    for name in ENGINE_FILES:
+        tree = ast.parse(open(os.path.join(HERE, name), encoding="utf-8").read())
+        found = {}
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "add_argument"
+                    and node.args and isinstance(node.args[0], ast.Constant)
+                    and node.args[0].value in NUMERIC_FLAGS):
+                found[node.args[0].value] = next(
+                    (ast.unparse(k.value) for k in node.keywords if k.arg == "type"), None)
+        for flag, (fn, _bad, _good) in NUMERIC_FLAGS.items():
+            if found.get(flag) != "page_flow." + fn:
+                problems.append("%s declares %s with type=%s" % (name, flag, found.get(flag)))
+    for flag, (fn, bad, good) in NUMERIC_FLAGS.items():
+        validator = getattr(pf, fn)
+        for value in bad:
+            try:
+                validator(str(value))
+                problems.append("%s accepted %r" % (fn, value))
+            except _ap.ArgumentTypeError as e:
+                if flag not in str(e):
+                    problems.append("%s's error does not name %s" % (fn, flag))
+        for value in good:
+            try:
+                validator(str(value))
+            except _ap.ArgumentTypeError:
+                problems.append("%s refused the valid %r" % (fn, value))
+    check("every engine's numeric flags refuse values they cannot honour (exit 2)",
+          not problems, "; ".join(problems))
+
+
+def check_mirror_engines_read_the_fingerprint_ua_through_the_shared_reader():
+    """`userAgent.value` exists in neither documented response shape, so an
+    engine reading it set no UA and installed the fingerprint's platform and
+    WebGL over the browser's real one: a contradictory identity."""
+    import fingerprint_client as FC
+    equal("the chromium shape's UA is read", FC.fingerprint_user_agent(
+        {"userAgent": {"userAgent": "UA-chromium"}}), "UA-chromium")
+    equal("the raw shape's UA is read", FC.fingerprint_user_agent(
+        {"data": {"ua": "UA-raw"}}), "UA-raw")
+    for name in ("selenium_scraper.py", "puppeteer_scraper.py"):
+        src = open(os.path.join(HERE, name), encoding="utf-8").read()
+        tree = ast.parse(src)
+        fn = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)
+                   and n.name == "_apply_fingerprint"), None)
+        body = ast.unparse(fn) if fn else ""
+        check("%s applies a fingerprint (not vacuous)" % name, "get_fingerprint(" in body)
+        check("%s reads the UA with fingerprint_user_agent" % name,
+              "ua = fingerprint_user_agent(fp)" in body)
+        check("%s never reads userAgent.value" % name, "'value'" not in body
+              and '"value"' not in body)
+
+
+def check_gitignore_covers_dumps_and_env_variants():
+    """What a run or a test session leaves at the root must be ignored, and
+    the files the repo ships must not be."""
+    if not os.path.isdir(os.path.join(HERE, ".git")):
+        skip("gitignore", "not a git checkout")
+        return
+    def ignored(path):
+        return subprocess.run(["git", "check-ignore", "-q", "--no-index", path],
+                              cwd=HERE).returncode == 0
+    for path in ("dump.html", "page.mhtml", ".env", ".env.bak", "x.json.page3",
+                 "out_page1_debug.html", "canary_dump.ndjson", "live/x.html"):
+        check("%s is gitignored" % path, ignored(path))
+    for path in (".env.example", "sample_output.json", "fixtures_generated.json",
+                 "README.md", "tests/test_smoke.py"):
+        check("%s is NOT gitignored" % path, not ignored(path))
+
+
+# Pointers into the maintainers' private notes. A public reader cannot open
+# them, so a shipped file states the rule in its own words instead. Built
+# from pieces, so this file is scanned like every other.
+PRIVATE_CITATIONS = (
+    re.compile(re.escape("CLAUDE" + ".md"), re.I),
+    re.compile(re.escape("claude_" + "2scraper"), re.I),
+    re.compile(re.escape("2scraper_" + "repo_rules"), re.I),
+    re.compile("(?:play" + "book|tem" + "plate)\\s*" + "\u00a7", re.I),
+    re.compile("\u00a7" + "\\s*\\d"),
+)
+
+
+def check_no_private_citations_in_shipped_files():
+    tracked = subprocess.run(["git", "ls-files", "-z"], cwd=HERE, capture_output=True,
+                             text=True)
+    paths = [p for p in tracked.stdout.split("\0") if p] if tracked.returncode == 0 else []
+    if not paths:
+        for root, dirs, files in os.walk(HERE):
+            dirs[:] = [d for d in dirs if d not in (".git", "__pycache__")
+                       and not os.path.exists(os.path.join(root, d, "pyvenv.cfg"))]
+            paths += [os.path.relpath(os.path.join(root, f), HERE) for f in files]
+    hits, scanned = [], 0
+    for rel in paths:
+        try:
+            text = open(os.path.join(HERE, rel), encoding="utf-8").read()
+        except (OSError, UnicodeDecodeError):
+            continue
+        scanned += 1
+        for n, line in enumerate(text.splitlines(), 1):
+            if any(r.search(line) for r in PRIVATE_CITATIONS):
+                hits.append("%s:%d" % (rel, n))
+    check("the citation scan read the repo (%d files)" % scanned, scanned > 20)
+    check("no shipped file cites the maintainers' private notes or their "
+          "section numbers", not hits, ", ".join(hits[:10]))
 
 
 CHECKS = [v for k, v in sorted(globals().items()) if k.startswith("check_")]

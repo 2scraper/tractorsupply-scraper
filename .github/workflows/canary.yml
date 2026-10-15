@@ -1,20 +1,22 @@
 # One real run of each mode against tractorsupply.com. tests.yml
 # (deliberately) never touches the site.
 #
-# WEEKLY, and SKIPPED without its secret. Two measurements decide it:
+# WEEKLY, and RED without its secret. Two measurements decide it:
 #
 #   * Akamai refused every client this repo tried except the 2Captcha
 #     Scraping Browser with a US exit (2026-09-28; the README's access
 #     table). A GitHub runner is a datacentre address running local
 #     Chromium, which is one of the refused rows, so a canary without the
-#     endpoint cannot pass — and a check that is always red teaches everyone
-#     to ignore checks (CLAUDE.md §11). Without the secret it goes green with
-#     a ::notice:: saying why.
+#     endpoint cannot reach the data. Without the secret it FAILS with an
+#     ::error:: naming TRACTORSUPPLY_CDP_ENDPOINT: a canary that never
+#     reached the site has tested nothing, and a green skip would read as a
+#     pass.
 #   * How long a Scraping Browser endpoint's credentials live. This was
-#     dispatch-only on the family's figure of "about a day", copied rather
+#     dispatch-only on an inherited figure of "about a day", copied rather
 #     than measured. Measured: the endpoint set here on 2026-09-28 was still
 #     served on 2026-10-08, when a canary ran on it by accident and passed
-#     (144 of 270, 144 of 1,070). So a weekly run tests the real path for
+#     (144 of 270, 144 of 1,070), and again by the scheduled run on
+#     2026-10-12. So a weekly run tests the real path for
 #     most of an endpoint's life, and when it expires the run goes red with
 #     exit 5 and a 401 — which says exactly what to do. A third-party audit
 #     (2026-10-08) asked for continuous live monitoring; this is the part of
@@ -47,7 +49,7 @@ jobs:
     strategy:
       fail-fast: false
       # One at a time: a Scraping Browser profile takes ONE live connection,
-      # and two jobs on the same pid collide with profile_locked (§7).
+      # and two jobs on the same pid collide with profile_locked.
       max-parallel: 1
       matrix:
         include:
@@ -62,10 +64,11 @@ jobs:
     env:
       TRACTORSUPPLY_CDP_ENDPOINT: ${{ secrets.TRACTORSUPPLY_CDP_ENDPOINT }}
     steps:
-      - name: Skip without the Scraping Browser endpoint
+      - name: Fail without the Scraping Browser endpoint
         if: env.TRACTORSUPPLY_CDP_ENDPOINT == ''
         run: |
-          echo "::notice::TRACTORSUPPLY_CDP_ENDPOINT is not set, so this canary cannot pass: a GitHub runner is one of the clients tractorsupply.com refuses (see the README). Set a fresh endpoint as the secret and dispatch again."
+          echo "::error::The secret TRACTORSUPPLY_CDP_ENDPOINT is not set, so this canary cannot reach tractorsupply.com: a GitHub runner is one of the clients the site refuses (see the README). Set a fresh endpoint as the secret and dispatch again."
+          exit 1
 
       - uses: actions/checkout@v4
         if: env.TRACTORSUPPLY_CDP_ENDPOINT != ''
@@ -81,7 +84,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-playwright.txt
 
-      # >= 3 pages, because with one page pagination is never exercised (§11).
+      # >= 3 pages, because with one page pagination is never exercised.
       - name: Run
         id: run
         if: env.TRACTORSUPPLY_CDP_ENDPOINT != ''
@@ -101,6 +104,7 @@ jobs:
             0) ;;
             3) echo "::error::Blocked by Akamai even through the Scraping Browser. That is the one client the README says is served, so this is the README's central claim failing; see canary_page*_debug.html."; exit 1 ;;
             4) echo "::error::Zero rows from a listing that is never empty. The endpoint's shape has moved; see canary_dump.ndjson."; exit 1 ;;
+            6) echo "::error::Rows arrived but the run is incomplete (a page failed, or a served page that states rows parsed to none: stop_reason parser_found_nothing). See canary.meta.json."; exit 1 ;;
             5) echo "::error::The data never arrived, or the endpoint REFUSED the parameters (the log names the site's own complaint). A 401 on connect means the endpoint's credentials expired."; exit 1 ;;
             *) echo "::error::Unexpected exit $code."; exit 1 ;;
           esac

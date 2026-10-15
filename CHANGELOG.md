@@ -15,9 +15,43 @@ said so at the top of its release notes.
 > exit 3 or 4 with a 39-byte "capture", in tens of milliseconds. If a
 > script of yours passes 0, pass **1**: the flag counts ATTEMPTS, so 1 means
 > "try once and do not retry".
+>
+> **Behaviour change:** a page the site served, whose own result count says
+> it holds products, but that parses to zero rows is now a **parser
+> failure** (`stop_reason: parser_found_nothing`): exit 5 on page 1, exit 6
+> and `status: partial` on a later page. It used to be exit 4 ("the listing
+> is empty") on page 1 and exit 0 `complete` on a later page, with that
+> page's products silently missing.
+>
+> **Behaviour change:** `--proxy-block-retries` below 0, `--pages` and
+> `--concurrency` below 1, `--page-size` outside 1-200, and a negative (or
+> non-finite) `--delay` / `--retry-delay` are now usage errors (exit 2) in
+> all three engines. `--proxy-block-retries -1` used to send no request at
+> all and report exit 5; `--page-size 0` silently became 48.
 
 ### Fixed
 
+- **A served page that parses to nothing is no longer "empty" or
+  "complete".** When the response's own `resultsFound` puts rows on that
+  page, or it carries product entries the parser could not read, the page
+  fails with `parser_found_nothing` and is saved as a debug file. A page
+  that its own total puts past the end (the listing shrank during the run)
+  still ends the run as `end_of_listing`, complete.
+- **`--fingerprint` on Selenium and pyppeteer now sets the fingerprint's
+  user agent.** Both read it from `userAgent.value`, which neither response
+  format has, so they installed the fingerprint's platform and WebGL strings
+  over the browser's own UA. They now use the same reader as Playwright.
+- **The numeric flags are validated before anything is fetched** (see the
+  behaviour change above), with an error naming the flag.
+- **A root-level `.html` / `.mhtml` dump is gitignored**, so `git add -A`
+  cannot stage a `--dump-html page.html` capture.
+- **Credential lifetime wording.** The README, TROUBLESHOOTING, the CDP 401
+  hint and `.env.example` no longer repeat an unmeasured "about a day"; they
+  state the measured case (an endpoint set 2026-09-28 still served by the
+  scheduled canary on 2026-10-12).
+- **Public files no longer point at private maintainer notes.** Section
+  references in comments and docstrings were replaced by the rule itself,
+  and the suite fails if such a reference returns.
 - **`--retries 0` fetched nothing and called it a result.** The load loop is
   `range(1, retries + 1)`, so 0 never runs it and the engine judged
   `about:blank`. Three third-party audits of this family ran exactly that and
@@ -25,6 +59,13 @@ said so at the top of its release notes.
   `page_flow.attempts` in every entry point; a check reads the source of each
   one and calls the validator, so a new engine declaring the flag with a
   plain int fails the suite.
+
+### Changed
+
+- **The canary fails when its secret is missing.** Without
+  `TRACTORSUPPLY_CDP_ENDPOINT` it used to go green with a notice; a canary
+  that never reached the site has tested nothing, so it now fails with an
+  error naming the secret. Exit 6 (incomplete) is reported by name.
 
 ## [0.1.1] — 2026-10-08
 
