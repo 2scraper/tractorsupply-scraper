@@ -1,4 +1,4 @@
-# tractorsupply-scraper
+# Tractor Supply Scraper — Store Prices, Stock and Ratings in Python
 
 [![release](https://img.shields.io/github/v/release/2scraper/tractorsupply-scraper)](https://github.com/2scraper/tractorsupply-scraper/releases)
 [![tests](https://github.com/2scraper/tractorsupply-scraper/actions/workflows/tests.yml/badge.svg)](https://github.com/2scraper/tractorsupply-scraper/actions/workflows/tests.yml)
@@ -7,6 +7,8 @@
 [![licence](https://img.shields.io/badge/licence-MIT-green)](LICENSE)
 ![engines](https://img.shields.io/badge/engines-playwright%20%7C%20selenium%20%7C%20pyppeteer-lightgrey)
 ![needs](https://img.shields.io/badge/needs-Scraping%20Browser%20API%20(US)-orange)
+
+**Tractor Supply scraper** — an open-source (MIT) Python tool that reads tractorsupply.com categories, whole departments and keyword searches and writes products priced at a specific store, with unit price, stock, pickup availability and ratings, to JSON or CSV. On this site it needs the 2Captcha Scraping Browser API with a US exit: measured 2026-09-28, that was the only client served, while datacentre curl, local Chromium, a US residential proxy and the 2Captcha Scraper API were all refused. Use it to build a product dataset or for store-level price monitoring, comparing two runs priced at the same store with `diff_runs.py`.
 
 Scrapes [tractorsupply.com](https://www.tractorsupply.com) listings — a
 category, a whole department, or a keyword search — into JSON and CSV, with
@@ -287,3 +289,20 @@ This reads public catalogue pages the way the site's own front end does, as
 an anonymous visitor. Whether and how you may scrape a site depends on your
 jurisdiction and its terms; that is your responsibility as the operator.
 Nothing here logs in, adds to a cart or places an order.
+
+## Guides
+
+- [How to run the 2scraper scrapers: setup, proxies, exit codes and access modes](https://2captcha.com/h/how-to-run-2scraper-open-source-scrapers) — installation, `.env`, `.meta.json` for the whole family.
+
+## Related scrapers
+
+Same CLI conventions, same output contract (one row per item, JSON or CSV, a `.meta.json` sidecar and shared exit codes):
+
+- [Woolworths scraper](https://github.com/2scraper/woolworths-scraper) — Prices, unit prices, specials, health star ratings…
+- [Amazon scraper](https://github.com/2scraper/amazon-scraper) — Search results, best-seller grids, product pages and reviews…
+- [Andie Swim scraper](https://github.com/2scraper/andieswim-scraper) — Collections, keyword lookups and per-size stock…
+- [Bershka scraper](https://github.com/2scraper/bershka-scraper) — Every SKU in a Bershka category
+- [Catawiki scraper](https://github.com/2scraper/catawiki-scraper) — Auction lots, bids, reserves, estimates and sellers…
+- [Etsy scraper](https://github.com/2scraper/etsy-scraper) — Search, category, shop and listing pages as JSON or CSV…
+
+All scrapers: [github.com/2scraper](https://github.com/2scraper) · Need another site? [Open a request](https://github.com/2scraper/.github/issues/new?title=%5BScraper%20request%5D%20)
