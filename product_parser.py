@@ -596,6 +596,103 @@ def next_data(html: Optional[str]) -> Optional[Dict[str, Any]]:
     return d if isinstance(d, dict) else None
 
 
+# The App Router markup. Since about 2026-11 the site serves a category page
+# in one of two builds, and which one depends on the browser session, not
+# the route: measured 2026-11-05 through two Scraping Browser profiles, one
+# got the old Pages Router document (`__NEXT_DATA__`) for every category,
+# the other the new App Router one for categories and still the old one for
+# a department. The new build carries no `__NEXT_DATA__`; its data is the
+# React Server Components stream the page feeds in through
+# `self.__next_f.push([1, "<chunk>"])` scripts.
+_FLIGHT_CHUNK_RE = re.compile(r'self\.__next_f\.push\(\[1,"((?:[^"\\]|\\.)*)"\]\)', re.S)
+
+
+def next_flight(html: Optional[str]) -> str:
+    """The App Router payload of a page, decoded and joined, or "".
+
+    Chunks are joined BEFORE anything is searched, because one JSON object
+    can be split across two pushes.
+    """
+    out = []
+    for chunk in _FLIGHT_CHUNK_RE.findall(html or ""):
+        try:
+            out.append(json.loads('"' + chunk + '"'))
+        except ValueError:
+            continue
+    return "".join(out)
+
+
+def _json_objects_after(text: str, key: str) -> List[Dict[str, Any]]:
+    """Every JSON object that is the value of `"key":` in `text`."""
+    dec = json.JSONDecoder()
+    found = []
+    needle = '"%s":' % key
+    i = text.find(needle)
+    while i >= 0:
+        j = i + len(needle)
+        while j < len(text) and text[j] in " \t":
+            j += 1
+        if j < len(text) and text[j] == "{":
+            try:
+                obj, _end = dec.raw_decode(text, j)
+                if isinstance(obj, dict):
+                    found.append(obj)
+            except ValueError:
+                pass
+        i = text.find(needle, i + 1)
+    return found
+
+
+def _flight_category_details(flight: str) -> Optional[Dict[str, Optional[str]]]:
+    """category_details() for the App Router build.
+
+    The page carries several `categoryDetails` objects (6 on the measured
+    poultry-feed-treats page); the one that matters has `catIdDetails`, whose
+    `value` is the search id — 24660 there, the same id the old build states.
+    If more than one carries an id they must agree, or nothing is returned:
+    two ids on one page is not a page this code understands.
+
+    A department in this build would have no `linkTreeData`, so the
+    department rule (`_department_id`) cannot be applied; none was served in
+    this build when this was written, and rather than guess, None is
+    returned and the page is saved for an issue.
+    """
+    ids, chosen = set(), None
+    for obj in _json_objects_after(flight, "categoryDetails"):
+        cid = _str((obj.get("catIdDetails") or {}).get("value"))
+        if cid:
+            ids.add(cid)
+            chosen = chosen or obj
+    if len(ids) != 1:
+        return None
+    sel = chosen.get("selectedEntry") or {}
+    return {"id": ids.pop(), "name": _str(sel.get("name")), "kind": "category",
+            "path": _str(sel.get("fullPath")), "slug": _str(sel.get("seo_token_ntk"))}
+
+
+def category_page_missing(html: Optional[str]) -> bool:
+    """True when an App Router category page is the site's "no such category".
+
+    The old build answered an unknown slug with HTTP 500 and its `/_error`
+    page. The new one answers HTTP 200 (measured 2026-11-05) with a page of
+    its own assets and NO listing context: no `categoryDetails` and no
+    `"pageType":` key anywhere in its payload, where a served category carries
+    `pageType: catalog` 61 times. The words a reader would look for are no
+    marker here: "notFound", "couldn't find" and "404" are in the payload of
+    the GOOD page as often as the missing one, because Next.js inlines its
+    404 template and the site ships its own copy text in every page.
+
+    Scoped to the category page: the homepage is an App Router document too.
+    """
+    flight = next_flight(html)
+    if not flight:
+        return False
+    # The KEY, not the word: the missing page still carries the string
+    # "pageType" 3 times as a value elsewhere, and never as a key.
+    return ('"categoryDetails"' not in flight
+            and re.search(r'"pageType"\s*:', flight) is None)
+
+
 def _department_id(inner: Dict[str, Any]) -> Optional[str]:
     """A department's search id: the parent every one of its children names.
 
@@ -644,7 +741,7 @@ def category_details(html: Optional[str]) -> Optional[Dict[str, Optional[str]]]:
     """
     d = next_data(html)
     if not d:
-        return None
+        return _flight_category_details(next_flight(html))
     pp = (d.get("props") or {}).get("pageProps") or {}
     inner = pp.get("pageProps") if isinstance(pp.get("pageProps"), dict) else pp
     leaf = (inner.get("content") or {}).get("categoryDetails")

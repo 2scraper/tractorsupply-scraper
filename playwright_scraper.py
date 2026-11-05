@@ -219,10 +219,25 @@ class _Ops:
         return _proxy_failure(text)
 
     def relaunch(self):
-        """A fresh browser on the pool's current exit. On a remote browser
-        only the landing is reset, since its exit is not ours to change."""
+        """A fresh browser on the pool's current exit.
+
+        On a remote browser the exit is not ours to change, but the PAGE is:
+        a closed page used to stay in place, so every retry ran into it
+        again. Now a new page in the same profile, and a reconnect when the
+        browser connection itself is gone."""
         if self.remote:
             self.landed = False
+            try:
+                self.page.close()
+            except Exception as e:  # noqa: BLE001 — it may already be gone
+                logger.debug("Ignoring error closing the old page: %s", e)
+            try:
+                if self.browser is not None and self.browser.is_connected():
+                    self.page = self.context.new_page()
+                    return
+            except Exception as e:  # noqa: BLE001
+                logger.debug("New page failed (%s); reconnecting.", _mask_credentials(str(e)))
+            self.browser, self.context, self.page = _connect_remote(self.pw, self.args)
             return
         try:
             self.browser.close()
@@ -252,12 +267,9 @@ def _connect_remote(pw, args):
         except (PWError, PWTimeout) as err:
             e = err
             if attempt < page_flow.CDP_CONNECT_ATTEMPTS and page_flow.cdp_should_retry(str(err)):
-                logger.warning("The Scraping Browser profile is still locked "
-                               "(attempt %d/%d) — a previous run may be "
-                               "releasing it; retrying in %.0fs.", attempt,
-                               page_flow.CDP_CONNECT_ATTEMPTS,
-                               page_flow.CDP_LOCKED_WAIT_S)
-                time.sleep(page_flow.CDP_LOCKED_WAIT_S)
+                logger.warning("%s", page_flow.cdp_retry_message(
+                    _mask_credentials(str(err)), attempt))
+                time.sleep(page_flow.cdp_retry_wait(str(err)))
                 continue
             break
     if browser is None:

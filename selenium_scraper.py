@@ -273,9 +273,8 @@ class _Ops:
         return _proxy_failure(text)
 
     def relaunch(self):
-        if self.remote:
-            self.landed = False
-            return
+        """A fresh driver. On a remote browser too: the old relaunch only
+        reset a flag, so a closed window was retried as-is."""
         self.close()
         self.open()
 

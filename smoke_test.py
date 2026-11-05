@@ -118,7 +118,7 @@ def check_fixture_corpus_is_real_and_scrubbed():
     expected = {"cat_p1", "cat_p2", "cat_past_end", "cat_unknown_id", "price_ga",
                 "price_tx", "kw_p1", "kw_junk", "rejected_zone", "rejected_sort",
                 "rejected_page_size", "rejected_no_channel", "rejected_no_store",
-                "circuit_breaker", "search_redirect",
+                "circuit_breaker", "search_redirect", "page_category_app", "page_missing_app",
                 "stores_75001", "stores_99501", "page_category",
                 "page_department_farm_ranch", "page_department_pet", "page_missing",
                 "akamai_raw", "akamai_dom_cdp", "landing_cdp"}
@@ -479,7 +479,19 @@ def check_state_policy():
     check("a CDP 401 is explained as expired credentials, not a held pid",
           "expired" in F.cdp_connect_hint("WebSocket error: 401 Unauthorized")
           and "pid" not in F.cdp_connect_hint("401 Unauthorized"))
-    check("...and a 500 as a held pid", "pid" in F.cdp_connect_hint("HTTP 500"))
+    # Changed 2026-11-05: a 500 was explained as "another run holds this pid"
+    # whatever its body said. Three different failures share that status.
+    check("...a 500 profile_locked as a held pid",
+          "another one still holds this pid" in F.cdp_connect_hint(
+              "WebSocket error: 500 Internal Server Error\nprofile_locked"))
+    check("...a 500 proxy_error as the profile's exit, NOT a held pid",
+          "could not raise this profile's exit" in F.cdp_connect_hint(
+              "WebSocket error: 500 Internal Server Error\nproxy_error")
+          and "holds this pid" not in F.cdp_connect_hint("500 proxy_timeout"))
+    check("...and a connect timeout as no answer, NOT a 500",
+          "did not answer" in F.cdp_connect_hint(
+              "BrowserType.connect_over_cdp: Timeout 30000ms exceeded.")
+          and "500" not in F.cdp_connect_hint("Timeout 30000ms exceeded."))
     check("a 401 is not retried, a locked profile is",
           not F.cdp_should_retry("401") and F.cdp_should_retry("500 profile_locked"))
 
@@ -612,8 +624,9 @@ def check_the_shared_loop_end_to_end():
     equal("...page 2 asked for twice", ops.fetches, ["stores", "page", 1, 2, 2])
     ops = _FakeOps(search={1: [(200, fx("cat_p1"))], 2: [(200, fx("circuit_breaker"))]})
     rc, meta, rows, ops = _run(ops, pages=2)
-    equal("...and one that persists is a partial run that says so", (rc, meta["stop_reason"]),
-          (6, "page_load_timeout"))
+    # Changed 2026-11-05: it used to say page_load_timeout, and nothing timed out.
+    equal("...and one that persists is a partial run that names the backend",
+          (rc, meta.get("stop_reason")), (6, "backend_unavailable"))
 
     rc, meta, rows, ops = _run(_FakeOps(search={1: [(403, fx("akamai_raw"))]}))
     equal("Akamai on page 1: exit 3", rc, 3)
@@ -1697,6 +1710,271 @@ def check_the_sidecar_is_a_manifest_of_the_files_beside_it():
         meta = json.load(open(prefix + ".meta.json", encoding="utf-8"))
         equal("--format json lists only what THIS run wrote, not a stale CSV",
               sorted(meta.get("outputs") or {}), ["out.json"])
+
+
+# ---------------------------------------------------------------------------
+# Audit 2026-11-05 (#4-#7): a dead page, connect failures, the profile, dumps
+# ---------------------------------------------------------------------------
+
+class _DyingPage(_FakeOps):
+    """A fake driver whose page dies on the first fetch, as a 2026-11 audit
+    saw: "Page.evaluate: Target page, context or browser has been closed"."""
+
+    def __init__(self, deaths=1, **kw):
+        super().__init__(**kw)
+        self.deaths = deaths
+
+    def fetch(self, req):
+        if self.deaths > 0:
+            self.deaths -= 1
+            self.fetches.append("dead")
+            return None, "", None, ("Page.evaluate: Target page, context or "
+                                    "browser has been closed")
+        if self.deaths < 0:   # never recovers
+            self.fetches.append("dead")
+            return None, "", None, ("Page.evaluate: Target page, context or "
+                                    "browser has been closed")
+        return super().fetch(req)
+
+
+def check_a_closed_page_is_replaced_not_retried():
+    ops = _DyingPage(deaths=1, search={1: [(200, fx("cat_p1"))]})
+    rc, meta, rows, ops = _run(ops, pages=1)
+    equal("a page that died once: a fresh page, and the run completes", rc, 0)
+    check("...the loop relaunched instead of retrying into the dead page",
+          ops.relaunches >= 1, "relaunches=%d" % ops.relaunches)
+    ops = _DyingPage(deaths=-1)
+    rc, meta, rows, ops = _run(ops, pages=1)
+    equal("a page that never comes back: exit 5", rc, 5)
+    check("...relaunched before each retry", ops.relaunches >= 2,
+          "relaunches=%d" % ops.relaunches)
+
+
+def check_a_transport_error_is_not_called_a_timeout():
+    import page_flow as F
+    o = F.PageOutcome(page_num=1, url="u", load_failed=True,
+                      error="Page.evaluate: Target page, context or browser has been closed")
+    equal("a closed page is a transport_error", F.stop_reason_for(o), "transport_error")
+    o.error = "Page.goto: Timeout 60000ms exceeded."
+    equal("a timeout is still a page_load_timeout", F.stop_reason_for(o), "page_load_timeout")
+    o.error = "net::ERR_HTTP2_PROTOCOL_ERROR at https://www.tractorsupply.com/"
+    equal("a reset connection is a transport_error", F.stop_reason_for(o), "transport_error")
+
+
+def check_connect_failures_are_told_apart():
+    import page_flow as F
+    kinds = {"WebSocket error: 401 Unauthorized": "expired",
+             "WebSocket error: 500 Internal Server Error\nprofile_locked": "locked",
+             "WebSocket error: 500 Internal Server Error\nproxy_error": "exit_down",
+             "WebSocket error: 500 Internal Server Error\nproxy_timeout": "exit_down",
+             "BrowserType.connect_over_cdp: Timeout 30000ms exceeded.": "no_answer",
+             "pyppeteer call did not return within 10s": "no_answer"}
+    for text, kind in kinds.items():
+        equal("connect failure %r is %s" % (text.split("\n")[-1][:40], kind),
+              F.cdp_failure_kind(text), kind)
+    check("an expired credential is never retried",
+          not F.cdp_should_retry("WebSocket error: 401 Unauthorized"))
+    check("a proxy_error IS retried (the audit saw it clear within a minute)",
+          F.cdp_should_retry("500 Internal Server Error\nproxy_error"))
+    check("...and a connect timeout is retried (it was not before)",
+          F.cdp_should_retry("Timeout 30000ms exceeded."))
+    check("...and the exit-down wait is long, the locked wait short",
+          F.cdp_retry_wait("500\nproxy_timeout") >= 15 > F.cdp_retry_wait("500\nprofile_locked"))
+    check("the retry message names what happened, not a guess about a pid",
+          "could not raise this profile's exit" in F.cdp_retry_message("500\nproxy_error", 1)
+          and "pid" not in F.cdp_retry_message("500\nproxy_error", 1))
+    for module in ENGINES:
+        src = open(os.path.join(HERE, module + ".py"), encoding="utf-8").read()
+        if "cdp_should_retry" not in src:
+            continue
+        check("%s waits by the failure's kind" % module, "cdp_retry_wait(" in src)
+        check("%s no longer says 'still locked' for every failure" % module,
+              "still locked" not in src and "may still be locked" not in src)
+
+
+def check_a_refusal_over_cdp_names_the_profile():
+    import page_flow as F
+    check("over --cdp-endpoint the advice is another pid",
+          "different pid" in F.refusal_advice("blocked", remote=True))
+    check("...and locally it still points at the Scraping Browser",
+          "Scraping Browser" in F.refusal_advice("blocked", remote=False))
+    import logging
+    records = []
+
+    class Grab(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    class Remote(_FakeOps):
+        remote = True
+    h = Grab()
+    F.log.addHandler(h)
+    try:
+        _run(Remote(search={1: [(403, fx("akamai_raw"))]}), pages=1, cdp_endpoint="ws://x")
+    finally:
+        F.log.removeHandler(h)
+    check("the retry over a profile does not promise a fresh browser",
+          any("same Scraping Browser profile" in m for m in records)
+          and not any("from a fresh browser" in m for m in records))
+    check("...and the final advice says to use another pid",
+          any("different pid" in m for m in records))
+
+
+def check_the_category_page_is_saved_for_an_issue():
+    import product_parser as P
+    with tempfile.TemporaryDirectory() as d:
+        dump = os.path.join(d, "dump.ndjson")
+        ops = _FakeOps(search={1: [(200, fx("cat_p1"))]})
+        rc, meta, rows, ops = _run(ops, pages=1, dump_html=dump)
+        check("--dump-html saves the category page too",
+              os.path.exists(dump + ".category.html"))
+        saved = (open(dump + ".category.html", encoding="utf-8").read()
+                 if os.path.exists(dump + ".category.html") else None)
+        equal("...byte-identical to what the resolver read", saved, fx("page_category"))
+    nameless = '<html><body><img src="https://media.tractorsupply.com/x.png"></body></html>'
+    check("the nameless page really names no id (control)",
+          P.category_details(nameless) is None)
+    import page_flow as F
+    with tempfile.TemporaryDirectory() as d:
+        import logging
+        records = []
+
+        class Grab(logging.Handler):
+            def emit(self, record):
+                records.append(record.getMessage())
+        h = Grab()
+        F.log.addHandler(h)
+        try:
+            args = types.SimpleNamespace(
+                pages=1, retries=2, retry_delay=0, delay=0, proxy_block_retries=2,
+                out=os.path.join(d, "out"), format="json", allow_empty=False,
+                dump_html=None, url=None, cdp_endpoint=None, concurrency=1)
+            ops = _FakeOps(page=(200, nameless))
+            rc = F.run_pages(lambda: ops, lambda o: None, lambda p: ([], [], False),
+                             args, None, P.Query("category", slug="x"), 1)
+        finally:
+            F.log.removeHandler(h)
+        equal("a page with no id: exit 2", rc, 2)
+        check("...and it is saved without being asked",
+              os.path.exists(os.path.join(d, "out_category_debug.html")))
+        check("...and the message names where",
+              any("out_category_debug.html" in m for m in records))
+
+
+def check_a_remote_relaunch_opens_a_new_page():
+    """Playwright, offline: a stand-in browser that is still connected gets
+    a new page; one that is gone gets a reconnect."""
+    engine = _import_engine("playwright_scraper")
+    if engine is None:
+        return
+
+    class Page:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    class Ctx:
+        def __init__(self):
+            self.made = 0
+
+        def new_page(self):
+            self.made += 1
+            return Page()
+
+    class Browser:
+        def __init__(self, up):
+            self.up = up
+
+        def is_connected(self):
+            return self.up
+    ops = engine._Ops(None, types.SimpleNamespace(cdp_endpoint="ws://x"), None, remote=True)
+    old = Page()
+    ops.page, ops.context, ops.browser = old, Ctx(), Browser(True)
+    ops.relaunch()
+    check("a remote relaunch closes the dead page", old.closed)
+    check("...and opens a new one in the same profile",
+          ops.context.made == 1 and ops.page is not old)
+    reconnects = []
+    real = engine._connect_remote
+    engine._connect_remote = lambda pw, args: (reconnects.append(1) or (Browser(True), Ctx(), Page()))
+    try:
+        ops.browser = Browser(False)
+        ops.relaunch()
+    finally:
+        engine._connect_remote = real
+    equal("...and reconnects when the browser itself is gone", len(reconnects), 1)
+
+
+def check_the_app_router_build_resolves_like_the_old_one():
+    """2026-11-05: through one Scraping Browser profile the site served
+    category pages as an App Router build with no __NEXT_DATA__, and every
+    --category run, the README's first command among them, stopped with
+    exit 2 "names no id". The id was on the page, in the RSC stream."""
+    import product_parser as P
+    import logging
+    import page_flow as F
+    page = fx("page_category_app")
+    check("the fixture really is the new build (no __NEXT_DATA__, an RSC push)",
+          "__NEXT_DATA__" not in page and "self.__next_f.push" in page)
+    equal("its id is read from the RSC stream",
+          P.category_details(page),
+          {"id": "24660", "name": "Poultry Feed & Treats", "kind": "category",
+           "path": "Poultry > Poultry Feed & Treats", "slug": "poultry-feed-treats"})
+    ops = _FakeOps(page=(200, page), search={1: [(200, fx("cat_p1"))]})
+    rc, meta, rows, ops = _run(ops, P.Query("category", slug="poultry-feed-treats"), pages=1)
+    equal("a --category run on the new build: exit 0", rc, 0)
+    equal("...searching the id the page states", (meta or {}).get("query", {}).get("category_id"),
+          "24660")
+    ops = _FakeOps(page=(200, page),
+                   search={1: [(200, fx("search_redirect")), (200, fx("cat_p1"))]})
+    rc, meta, rows, ops = _run(ops, P.Query("search", keyword="chicken feed"), pages=1)
+    equal("a redirected search lands on a new-build category and runs (exit 0)", rc, 0)
+
+    missing = fx("page_missing_app")
+    check("the missing-slug fixture is the new build too",
+          "__NEXT_DATA__" not in missing and "self.__next_f.push" in missing)
+    equal("an unknown slug in the new build is 'missing' though it is HTTP 200",
+          F._page_state(missing, 200, "u"), "missing")
+    equal("...and a served category in the same build is not",
+          F._page_state(page, 200, "u"), "content")
+    records = []
+
+    class Grab(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+    h = Grab()
+    F.log.addHandler(h)
+    try:
+        rc, meta, rows, ops = _run(_FakeOps(page=(200, missing)),
+                                   P.Query("category", slug="zz-no-such-category-1"), pages=1)
+    finally:
+        F.log.removeHandler(h)
+    equal("an unknown slug in the new build: exit 2", rc, 2)
+    check("...saying there is no such category, not that the layout changed",
+          any("no such category" in m for m in records)
+          and not any("layout has probably changed" in m for m in records), repr(records[-1:]))
+
+
+def check_the_missing_rule_does_not_read_words_that_good_pages_carry():
+    """'notFound', "couldn't find" and '404' were all in the SERVED new-build
+    page as often as the missing one (Next.js inlines its 404 template, and
+    the site ships copy text in every page), so the rule must not read them."""
+    import product_parser as P
+    src = open(os.path.join(HERE, "product_parser.py"), encoding="utf-8").read()
+    fn = next(n for n in ast.parse(src).body
+              if isinstance(n, ast.FunctionDef) and n.name == "category_page_missing")
+    # The code only: the docstring names these words on purpose, to say why
+    # they are not markers.
+    code = "\n".join(ast.get_source_segment(src, stmt) for stmt in fn.body[1:])
+    check("the rule's code was read (not vacuous)", "categoryDetails" in code, code[:80])
+    for word in ("notFound", "couldn't find", "404", "Page Not Found"):
+        check("category_page_missing does not test for %r" % word, word not in code)
+    check("an App Router page with listing context is never 'missing'",
+          not P.category_page_missing(fx("page_category_app")))
+    check("an old-build page is never judged by the new rule",
+          not P.category_page_missing(fx("page_category")))
 
 
 _TREE_BEFORE = None

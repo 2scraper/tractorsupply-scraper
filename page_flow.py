@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Tuple
 
 from output_writer import dedupe_by_key, finish_run, SOURCE_DEFAULT
-from product_parser import (BASE, DEFAULT_PAGE_SIZE, DEFAULT_SORT, DEFAULT_ZIP,
+from product_parser import (BASE, DEFAULT_PAGE_SIZE, category_page_missing, DEFAULT_SORT, DEFAULT_ZIP,
                             MAX_PAGES, ORIGIN_URL, Query, api_error,
                             category_details, category_page_request,
                             count_rows, detect_document_state,
@@ -183,9 +183,21 @@ def refusal_name(state: str) -> str:
     return {"challenge": "akamai-challenge", "blocked": "akamai"}.get(state, state)
 
 
-def refusal_advice(state: str) -> str:
+def refusal_advice(state: str, remote: bool = False) -> str:
     """One sentence on what changes the answer. Kept here so the three
-    engines cannot give three different pieces of advice."""
+    engines cannot give three different pieces of advice.
+
+    Over --cdp-endpoint the refused client IS the Scraping Browser profile:
+    a retry there reuses the same profile and its cookies, so the useful
+    advice is another pid, not another attempt. A 2026-11 audit reported one
+    flagged profile refused 8 times in a row while neighbouring profiles
+    were served; not re-measured here (no working endpoint at the time).
+    """
+    if remote:
+        return ("Akamai refused this Scraping Browser profile. A retry reuses "
+                "the same profile and its cookies; a profile Akamai has flagged "
+                "can stay refused while other profiles are served. Run again "
+                "with a different pid in --cdp-endpoint (country-us).")
     return ("Akamai refused this client. In testing (2026-09-28) the only "
             "client it served was the Scraping Browser with a US exit "
             "(--cdp-endpoint, country-us); local Chromium was refused from a "
@@ -228,6 +240,25 @@ def access_warning(args) -> Optional[str]:
             "exit 3, or exit 5 if the refusal arrives as a reset connection.")
 
 
+# What the drivers say when the page, context or browser under the run is
+# gone. Retrying the same request into it fails identically every time: a
+# 2026-11 audit saw all three attempts on fetchstoredetails and on
+# catalogSearch end with "Page.evaluate: Target page, context or browser has
+# been closed", then exit 5 named `page_load_timeout` with no timeout in it.
+_TARGET_GONE = ("Target page, context or browser has been closed",
+                "Target closed", "Session closed", "Browser has been closed",
+                "Connection closed", "browser has disconnected",
+                "no such window", "invalid session id")
+
+
+def target_gone(error: Optional[str]) -> bool:
+    """True when a transport error says the page itself no longer exists."""
+    return any(m in (error or "") for m in _TARGET_GONE)
+
+
+_TIMEOUT_WORDS = ("Timeout", "timed out", "did not return within", "TimeoutError")
+
+
 def stop_reason_for(outcome) -> str:
     """The run's stop_reason when `outcome` is the page that ended it."""
     if getattr(outcome, "unread", False):
@@ -238,7 +269,15 @@ def stop_reason_for(outcome) -> str:
         return "blocked_%s" % outcome.blocked_by
     if getattr(outcome, "state", None) == "throttled":
         return "throttled"
-    return "page_load_timeout"
+    if getattr(outcome, "state", None) == "unavailable":
+        return "backend_unavailable"
+    # Only a timeout is a timeout. A closed page, a reset connection or a
+    # dead proxy used to be reported as `page_load_timeout` too, which sends
+    # the reader to raise a timeout that was never reached.
+    error = getattr(outcome, "error", None) or ""
+    if not error or any(w in error for w in _TIMEOUT_WORDS):
+        return "page_load_timeout"
+    return "transport_error"
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +462,8 @@ class PageOutcome:
     # the payload) and the parser read none: the payload's shape has moved.
     # A failure, never "the listing ended" (see _unread).
     unread: bool = False
+    # The last transport error's text, for stop_reason_for.
+    error: Optional[str] = None
 
     @property
     def ok(self) -> bool:
@@ -520,6 +561,13 @@ def _rotate(ops, pool, has_pool: bool, why: str, attempt: int, budget: int,
         log.warning("%s at %s — rotating to another exit (%d/%d).", why,
                     mask(pool.current), attempt + 1, budget)
         pool.advance(why)
+    elif getattr(ops, "remote", False):
+        # Not "a fresh browser": over --cdp-endpoint the retry is a new page
+        # in the SAME Scraping Browser profile, with the same cookies and
+        # exit, and the log must not promise more than that.
+        log.warning("%s — re-fetching once in a new page of the same Scraping "
+                    "Browser profile (same cookies and exit; if it is refused "
+                    "again, use another pid).", why)
     else:
         log.warning("%s — re-fetching once from a fresh browser.", why)
     ops.relaunch()
@@ -557,6 +605,10 @@ def fetch_one_page(ops, args, pool, query: Query, page_num: int,
             at_landing = not ops.landed
             if not ops.landed:
                 state, last_error = land(ops, args)
+                if last_error and target_gone(last_error):
+                    log.warning("The browser page went away while landing (%s) "
+                                "— opening a fresh one.", mask(last_error)[:120])
+                    ops.relaunch()
                 if last_error:
                     exit_failed = ops.proxy_failure(last_error) or None
                     if exit_failed:
@@ -569,6 +621,13 @@ def fetch_one_page(ops, args, pool, query: Query, page_num: int,
                 status, text, waf, last_error = ops.fetch(req)
                 state = ("load_failed" if last_error
                          else classify_fn(text, status, req.url, waf))
+                if last_error and target_gone(last_error):
+                    # The same request into the same dead page fails the same
+                    # way every time; the next attempt needs a new page.
+                    log.warning("The browser page went away during %s (%s) — "
+                                "opening a fresh one.", req.label,
+                                mask(last_error)[:120])
+                    ops.relaunch()
                 if counts_as_blocked(state):
                     # A refusal of the session: the next attempt lands again.
                     ops.landed = False
@@ -607,6 +666,7 @@ def fetch_one_page(ops, args, pool, query: Query, page_num: int,
     outcome.state = state
     if state == "load_failed" or exit_failed:
         outcome.load_failed = True
+        outcome.error = last_error
         log.error("Gave up on %s: %s%s", req.label,
                   mask(last_error or "the request never completed"),
                   transport_hint(last_error))
@@ -625,7 +685,8 @@ def fetch_one_page(ops, args, pool, query: Query, page_num: int,
                  if at_landing else req.label)
         log.error("Blocked by %s on %s — saved to %s. This is exit 3, "
                   "distinct from an empty listing (exit 4). %s",
-                  outcome.blocked_by, where, debug, refusal_advice(state))
+                  outcome.blocked_by, where, debug,
+                  refusal_advice(state, remote=getattr(ops, "remote", False)))
     return outcome, text
 
 
@@ -683,8 +744,15 @@ def _json_state(text, status, url, waf=None) -> str:
 
 
 def _page_state(text, status, url, waf=None) -> str:
-    """The state of a fetched category PAGE."""
-    return detect_document_state(text, status, url)
+    """The state of a fetched category PAGE.
+
+    The App Router build answers an unknown category with HTTP 200, so the
+    old 500/`/_error` rule cannot see it (product_parser.category_page_missing).
+    """
+    state = detect_document_state(text, status, url)
+    if state == "content" and category_page_missing(text):
+        return "missing"
+    return state
 
 
 class ResolveError(Exception):
@@ -753,13 +821,24 @@ def _resolve_category(ops, args, pool, query: Query,
                            % query.slug)
     if not _served_or_failed(outcome, "The category page"):
         return outcome
+    # The category page is read here, before the listing loop where
+    # --dump-html works, so it is dumped here too: a 2026-11 audit was told
+    # to "open an issue" about this page and had no way to save it.
+    if getattr(args, "dump_html", None):
+        path = f"{args.dump_html}.category.html"
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text or "")
+        log.info("Saved the category page to %s (%d bytes).", path, len(text or ""))
     details = category_details(text)
     if not details:
+        debug = f"{args.out}_category_debug.html"
+        with open(debug, "w", encoding="utf-8") as f:
+            f.write(text or "")
         raise ResolveError(
             "/tsc/catalog/%s was served but names no id the search endpoint "
             "filters on, in either place a category or a department page keeps "
-            "one. The page layout has probably changed — open an issue."
-            % query.slug)
+            "one. The page layout has probably changed — the page is saved to "
+            "%s; please attach it to an issue." % (query.slug, debug))
     query.category_id = details["id"]
     query.category_name = details["name"]
     query.category_path = details["path"]
@@ -966,45 +1045,95 @@ def worker_pool(pool, worker_index: int):
     return ProxyPool(proxies[offset:] + proxies[:offset], rotate="per-run")
 
 
-def cdp_connect_hint(error_text: str) -> str:
-    """What a failed --cdp-endpoint connection means, from its status.
+def cdp_failure_kind(error_text: str) -> str:
+    """Which of four different things a failed --cdp-endpoint connect was.
 
-    Two answers that want opposite fixes: a 401 is expired credentials (a
-    profile's expire), a 500 is a profile another run still holds.
+        expired    HTTP 401: the endpoint's credentials were refused
+        locked     HTTP 500 `profile_locked`: another connection holds this pid
+        exit_down  HTTP 500 `proxy_error` / `proxy_timeout`: the service could
+                   not raise this profile's exit. Not a held pid. A 2026-11
+                   audit reported it passing about a minute later.
+        no_answer  the connect timed out with no answer at all
+        other      anything else
+
+    They used to share one explanation ("another run still holds this
+    pid"), which was right for one of the four.
     """
-    if "401" in (error_text or ""):
+    text = error_text or ""
+    if "401" in text:
+        return "expired"
+    if "profile_locked" in text:
+        return "locked"
+    if "proxy_error" in text or "proxy_timeout" in text:
+        return "exit_down"
+    if any(w in text for w in _TIMEOUT_WORDS):
+        return "no_answer"
+    return "other"
+
+
+def cdp_connect_hint(error_text: str) -> str:
+    """What a failed --cdp-endpoint connection means, by its kind."""
+    kind = cdp_failure_kind(error_text)
+    if kind == "expired":
         return ("HTTP 401: the endpoint's credentials were refused. A Scraping "
                 "Browser profile's credentials expire (one here was still "
-                "served 14 days after it was issued), so an "
-                "endpoint copied from an older .env may have expired. "
+                "served 17 days after it was issued and refused with a 401 by "
+                "day 28), "
+                "so an endpoint copied from an older .env may have expired. "
                 "Get a fresh one from your 2Captcha dashboard.")
-    return ("A Scraping Browser profile allows ONE live connection at a time, "
-            "so an HTTP 500 here usually means another run still holds this "
-            "`pid`. Wait for it to finish, or use a different pid.")
+    if kind == "locked":
+        return ("HTTP 500 profile_locked: a Scraping Browser profile allows ONE "
+                "live connection, and another one still holds this pid. Wait "
+                "for it to finish, or use a different pid.")
+    if kind == "exit_down":
+        return ("HTTP 500 proxy_error/proxy_timeout: the Scraping Browser "
+                "service could not raise this profile's exit. The pid is not "
+                "held by anyone; try again in a minute, or use another pid.")
+    if kind == "no_answer":
+        return ("The Scraping Browser endpoint did not answer the connection "
+                "in time. Try again; if it persists, use another pid.")
+    return ("The Scraping Browser endpoint refused the connection; the "
+            "message above is its own.")
 
 
-# Connecting to a Scraping Browser profile right after the previous run let
-# go of it answers HTTP 500 `profile_locked`: the service releases a profile
-# 1.6-1.9 s after a clean disconnect (measured by binance-scraper, and met
-# again here on 2026-09-28 between two back-to-back probes). Three attempts
-# 3 s apart ride that out, and a profile genuinely held by another run still
-# fails, after ~9 s, with the pid explanation.
-CDP_CONNECT_ATTEMPTS = 3
+# Connect attempts, and the wait before each retry, by kind:
+#   locked     a profile is released 1.6-1.9 s after a clean disconnect
+#              (measured by a sibling repo, met again here 2026-09-28), so a
+#              few short waits ride out the previous run letting go;
+#   exit_down  reported as clearing in about a minute, so the waits are long;
+#   no_answer  a connect that timed out once is worth one more try.
+# An expired credential is never retried.
+CDP_CONNECT_ATTEMPTS = 4
 CDP_LOCKED_WAIT_S = 3.0
+CDP_RETRY_WAIT_S = {"locked": 3.0, "exit_down": 20.0, "no_answer": 5.0, "other": 3.0}
 # pyppeteer does not surface the 500 at all: its connect() waits on a future
 # the rejected handshake never resolves, so only a timeout ends it.
 CDP_CONNECT_TIMEOUT_S = 10
 
 
 def cdp_should_retry(error_text: str) -> bool:
-    """Whether a failed --cdp-endpoint connection is worth another attempt:
-    a locked profile (500) or a connect that never answered. A 401 is not:
-    expired credentials stay expired."""
-    text = error_text or ""
-    if "401" in text:
-        return False
-    return ("profile_locked" in text or " 500" in text or "HTTP 500" in text
-            or "did not return within" in text)
+    """Whether a failed --cdp-endpoint connection is worth another attempt.
+    A 401 is not: expired credentials stay expired."""
+    return cdp_failure_kind(error_text) in ("locked", "exit_down", "no_answer") or (
+        " 500" in (error_text or "") and "401" not in (error_text or ""))
+
+
+def cdp_retry_wait(error_text: str) -> float:
+    """Seconds to wait before the next connect attempt, by failure kind."""
+    return CDP_RETRY_WAIT_S.get(cdp_failure_kind(error_text), CDP_LOCKED_WAIT_S)
+
+
+def cdp_retry_message(error_text: str, attempt: int) -> str:
+    """The log line before a connect retry: what happened, not a guess."""
+    kind = cdp_failure_kind(error_text)
+    what = {"locked": "the profile is still held by another connection",
+            "exit_down": "the service could not raise this profile's exit "
+                         "(proxy_error/proxy_timeout)",
+            "no_answer": "the endpoint did not answer in time"}.get(
+        kind, "the endpoint refused the connection")
+    return ("Could not connect to the Scraping Browser (attempt %d/%d): %s — "
+            "retrying in %.0fs." % (attempt, CDP_CONNECT_ATTEMPTS, what,
+                                    cdp_retry_wait(error_text)))
 
 
 # ---------------------------------------------------------------------------

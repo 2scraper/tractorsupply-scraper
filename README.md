@@ -31,8 +31,9 @@ only "144", and with the stores the prices are for.
 
 ## Start with the part most scrapers bury
 
-**On this site you need the 2Captcha Scraping Browser API, with a US exit.
-Nothing else was served.**
+**On this site you need the 2Captcha Scraping Browser API, with a US exit —
+and on 2026-11-05 even that did not reach the product data.** See the second
+table: access here changes, and the dates matter.
 
 Measured 2026-09-28. Akamai Bot Manager fronts the whole site:
 
@@ -44,7 +45,34 @@ Measured 2026-09-28. Akamai Bot Manager fronts the whole site:
 | US residential proxy, headless Chromium | `ERR_HTTP2_PROTOCOL_ERROR` |
 | US residential proxy, headful Chromium | homepage 200; every `/tsc/` navigation and `fetch()` 403 (13 of 13) |
 | 2Captcha Scraper API (its own exits) | target HTTP 403 on every URL tried, homepage included (4 of 4) |
-| **Scraping Browser, `country-us`** | **homepage 200; every request after it 200** |
+| **Scraping Browser, `country-us`** | **homepage 200; every request after it 200** (2026-09-28) |
+
+Re-measured 2026-11-05, from the same kind of datacentre address and through
+a US residential proxy exit (a Verizon address):
+
+| client | answer |
+|---|---|
+| plain curl, datacentre | HTTP 403 "Access Denied" (unchanged) |
+| local Chromium, headless, datacentre | refused on the homepage, exit 3 (unchanged) |
+| US residential proxy, headful Chromium | category page refused, and the search endpoint refused (exit 3) |
+| Scraping Browser, `country-us`, four profiles | homepage 200 on all four; the store lookup and a category page served on most; **the search endpoint (`catalogSearch`) refused on all four** |
+
+So on that day no client here obtained product rows. Two more things the
+re-measurement showed:
+
+- **A profile is refused after a handful of requests**, and a retry inside
+  it does not help: the profile's cookies are what is refused. The run says
+  so and suggests another `pid`; other profiles were served where a flagged
+  one was not.
+- **The site serves category pages in two builds** — the older one carrying
+  `__NEXT_DATA__`, and a newer App Router one carrying the same data in its
+  React Server Components stream — and which one depends on the browser
+  profile, not on the address. The scraper reads both.
+
+A third-party audit (November 2026) reported a home residential connection
+on which the Selenium engine *was* served (a search of 87 rows, a category
+of 48). It was not reproduced here: the residential proxy exit above was
+refused.
 
 Even through the Scraping Browser, *navigating* to a category page is
 refused. What is let through is what the site's own front end does: load the
@@ -199,7 +227,7 @@ says where it pointed, rather than calling the catalogue empty.
 |---|---|
 | `playwright_scraper.py` | primary. Served over `--cdp-endpoint`. |
 | `puppeteer_scraper.py` | served over `--cdp-endpoint`. pyppeteer is effectively unmaintained; here for parity. |
-| `selenium_scraper.py` | **not served.** chromedriver cannot send the credentials a Scraping Browser endpoint carries, so the one client the site served is out of its reach; a local Chrome is refused. It reports that correctly (exit 3), and is kept for parity. |
+| `selenium_scraper.py` | chromedriver cannot send the credentials a Scraping Browser endpoint carries, so the Scraping Browser is out of its reach. A local Chrome was refused from every address measured here (2026-09-28 and 2026-11-05); an audit reported it served from a home connection, not reproduced here. A refusal is reported correctly (exit 3). |
 
 All three share one fetch loop (`page_flow.run_pages`), so they agree on
 exit codes, run status and every retry decision by construction. Each
