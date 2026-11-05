@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Tuple
 
 from output_writer import dedupe_by_key, finish_run, SOURCE_DEFAULT
-from product_parser import (BASE, DEFAULT_PAGE_SIZE, DEFAULT_SORT, DEFAULT_ZIP,
+from product_parser import (BASE, DEFAULT_PAGE_SIZE, category_page_missing, DEFAULT_SORT, DEFAULT_ZIP,
                             MAX_PAGES, ORIGIN_URL, Query, api_error,
                             category_details, category_page_request,
                             count_rows, detect_document_state,
@@ -744,8 +744,15 @@ def _json_state(text, status, url, waf=None) -> str:
 
 
 def _page_state(text, status, url, waf=None) -> str:
-    """The state of a fetched category PAGE."""
-    return detect_document_state(text, status, url)
+    """The state of a fetched category PAGE.
+
+    The App Router build answers an unknown category with HTTP 200, so the
+    old 500/`/_error` rule cannot see it (product_parser.category_page_missing).
+    """
+    state = detect_document_state(text, status, url)
+    if state == "content" and category_page_missing(text):
+        return "missing"
+    return state
 
 
 class ResolveError(Exception):

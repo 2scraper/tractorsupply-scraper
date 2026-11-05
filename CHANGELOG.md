@@ -17,6 +17,19 @@ said so at the top of its release notes.
 
 ### Fixed
 
+- **Category pages in the site's new build resolve again.** The site now
+  serves a category page in one of two builds, chosen per browser profile:
+  the older one with `__NEXT_DATA__`, and an App Router one whose data sits
+  in its React Server Components stream. The new build has no
+  `__NEXT_DATA__`, so every `--category` run on it — the README's first
+  command among them, and any search the site redirects to a category —
+  stopped with exit 2 "names no id". The id is read from the stream now
+  (24660 for poultry-feed-treats, the same id the old build states).
+- **An unknown category in the new build is "no such category".** That
+  build answers an unknown slug with HTTP 200 instead of 500, so it was
+  reported as a changed layout. It is recognised by having no listing
+  context in its payload; the words "not found" are no marker there, since
+  the site's good pages carry them too.
 - **A closed browser page is replaced instead of retried.** When the page
   under a run went away ("Target page, context or browser has been closed"),
   every retry went into the same dead page and the run ended with exit 5.
@@ -36,6 +49,14 @@ said so at the top of its release notes.
   category page the run resolves its id from (`<dump>.category.html`), and a
   page with no id is saved to `<out>_category_debug.html` automatically, so
   the "open an issue" message has something to attach.
+
+### Documentation
+
+- The access table is re-measured (2026-11-05) beside the September one: on
+  that day the search endpoint was refused through every client tried,
+  including four Scraping Browser profiles, so no client obtained rows; a
+  profile was refused after a handful of requests. The Selenium row states
+  what was measured here and what an audit reported from a home connection.
 
 ## [0.2.0] — 2026-10-15
 

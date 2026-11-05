@@ -118,7 +118,7 @@ def check_fixture_corpus_is_real_and_scrubbed():
     expected = {"cat_p1", "cat_p2", "cat_past_end", "cat_unknown_id", "price_ga",
                 "price_tx", "kw_p1", "kw_junk", "rejected_zone", "rejected_sort",
                 "rejected_page_size", "rejected_no_channel", "rejected_no_store",
-                "circuit_breaker", "search_redirect",
+                "circuit_breaker", "search_redirect", "page_category_app", "page_missing_app",
                 "stores_75001", "stores_99501", "page_category",
                 "page_department_farm_ranch", "page_department_pet", "page_missing",
                 "akamai_raw", "akamai_dom_cdp", "landing_cdp"}
@@ -1905,6 +1905,76 @@ def check_a_remote_relaunch_opens_a_new_page():
     finally:
         engine._connect_remote = real
     equal("...and reconnects when the browser itself is gone", len(reconnects), 1)
+
+
+def check_the_app_router_build_resolves_like_the_old_one():
+    """2026-11-05: through one Scraping Browser profile the site served
+    category pages as an App Router build with no __NEXT_DATA__, and every
+    --category run, the README's first command among them, stopped with
+    exit 2 "names no id". The id was on the page, in the RSC stream."""
+    import product_parser as P
+    import logging
+    import page_flow as F
+    page = fx("page_category_app")
+    check("the fixture really is the new build (no __NEXT_DATA__, an RSC push)",
+          "__NEXT_DATA__" not in page and "self.__next_f.push" in page)
+    equal("its id is read from the RSC stream",
+          P.category_details(page),
+          {"id": "24660", "name": "Poultry Feed & Treats", "kind": "category",
+           "path": "Poultry > Poultry Feed & Treats", "slug": "poultry-feed-treats"})
+    ops = _FakeOps(page=(200, page), search={1: [(200, fx("cat_p1"))]})
+    rc, meta, rows, ops = _run(ops, P.Query("category", slug="poultry-feed-treats"), pages=1)
+    equal("a --category run on the new build: exit 0", rc, 0)
+    equal("...searching the id the page states", (meta or {}).get("query", {}).get("category_id"),
+          "24660")
+    ops = _FakeOps(page=(200, page),
+                   search={1: [(200, fx("search_redirect")), (200, fx("cat_p1"))]})
+    rc, meta, rows, ops = _run(ops, P.Query("search", keyword="chicken feed"), pages=1)
+    equal("a redirected search lands on a new-build category and runs (exit 0)", rc, 0)
+
+    missing = fx("page_missing_app")
+    check("the missing-slug fixture is the new build too",
+          "__NEXT_DATA__" not in missing and "self.__next_f.push" in missing)
+    equal("an unknown slug in the new build is 'missing' though it is HTTP 200",
+          F._page_state(missing, 200, "u"), "missing")
+    equal("...and a served category in the same build is not",
+          F._page_state(page, 200, "u"), "content")
+    records = []
+
+    class Grab(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+    h = Grab()
+    F.log.addHandler(h)
+    try:
+        rc, meta, rows, ops = _run(_FakeOps(page=(200, missing)),
+                                   P.Query("category", slug="zz-no-such-category-1"), pages=1)
+    finally:
+        F.log.removeHandler(h)
+    equal("an unknown slug in the new build: exit 2", rc, 2)
+    check("...saying there is no such category, not that the layout changed",
+          any("no such category" in m for m in records)
+          and not any("layout has probably changed" in m for m in records), repr(records[-1:]))
+
+
+def check_the_missing_rule_does_not_read_words_that_good_pages_carry():
+    """'notFound', "couldn't find" and '404' were all in the SERVED new-build
+    page as often as the missing one (Next.js inlines its 404 template, and
+    the site ships copy text in every page), so the rule must not read them."""
+    import product_parser as P
+    src = open(os.path.join(HERE, "product_parser.py"), encoding="utf-8").read()
+    fn = next(n for n in ast.parse(src).body
+              if isinstance(n, ast.FunctionDef) and n.name == "category_page_missing")
+    # The code only: the docstring names these words on purpose, to say why
+    # they are not markers.
+    code = "\n".join(ast.get_source_segment(src, stmt) for stmt in fn.body[1:])
+    check("the rule's code was read (not vacuous)", "categoryDetails" in code, code[:80])
+    for word in ("notFound", "couldn't find", "404", "Page Not Found"):
+        check("category_page_missing does not test for %r" % word, word not in code)
+    check("an App Router page with listing context is never 'missing'",
+          not P.category_page_missing(fx("page_category_app")))
+    check("an old-build page is never judged by the new rule",
+          not P.category_page_missing(fx("page_category")))
 
 
 _TREE_BEFORE = None

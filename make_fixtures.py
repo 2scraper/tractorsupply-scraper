@@ -104,6 +104,11 @@ SOURCES = {
     "page_department_farm_ranch": ("page_department_farm_ranch.html", "page", None, None, None),
     "page_department_pet": ("page_department_pet.html", "page", None, None, None),
     "page_missing": ("page_missing_500.html", "page", None, None, None),
+    # The App Router build of the same pages (2026-11-05, Scraping Browser):
+    # a category whose id lives only in the RSC stream, and an unknown slug,
+    # which this build answers with HTTP 200 rather than 500.
+    "page_category_app": ("page_category_app_router.html", "page_app", None, None, None),
+    "page_missing_app": ("page_missing_app_router.html", "page_app", None, None, None),
     "akamai_raw": ("akamai_deny_raw_curl.html", "verbatim", None, None, None),
     "akamai_dom_cdp": ("akamai_deny_dom_cdp.html", "verbatim", None, None, None),
     "landing_cdp": ("landing_home_cdp.html", "landing", None, None, None),
@@ -223,6 +228,39 @@ def cut_stores(text):
     return json.dumps(d, ensure_ascii=False)
 
 
+_PUSH_RE = re.compile(r'<script[^>]*>\s*self\.__next_f\.push\(\[1,"(?:[^"\\]|\\.)*"\]\)\s*</script>', re.S)
+
+
+def cut_page_app(html):
+    """An App Router page, cut to what the parser reads.
+
+    A category keeps its own `categoryDetails` object — the one carrying
+    `catIdDetails` — byte for byte out of the decoded RSC stream, re-wrapped
+    in one push chunk the way the site wraps it. A page with no such object
+    keeps its own FIRST push script verbatim, which is what makes it an App
+    Router page with a payload and no listing context. Both keep the title
+    and one real asset tag, by which a served page is recognised.
+    """
+    flight = pp.next_flight(html)
+    title = re.search(r"<title[^>]*>(.*?)</title>", html, re.S)
+    head = ("<!DOCTYPE html><html><head><title>%s</title></head><body>%s"
+            % (title.group(1) if title else "", first_asset_tag(html)))
+    dec = json.JSONDecoder()
+    i = flight.find('"categoryDetails":')
+    while i >= 0:
+        j = flight.index("{", i)
+        obj, end = dec.raw_decode(flight, j)
+        if isinstance(obj, dict) and obj.get("catIdDetails"):
+            fragment = '{%s}' % flight[i:end]
+            return (head + "<script>self.__next_f.push([1,%s])</script></body></html>"
+                    % json.dumps(fragment, ensure_ascii=False))
+        i = flight.find('"categoryDetails":', i + 1)
+    first = _PUSH_RE.search(html)
+    if not first:
+        raise SystemExit("no push script to keep")
+    return head + first.group(0) + "</body></html>"
+
+
 def verify(name, kind, orig, cut, spec, stores):
     status = STATUS.get(name)
     if kind in ("search", "verbatim") and kind != "stores":
@@ -245,8 +283,13 @@ def verify(name, kind, orig, cut, spec, stores):
         a, b = pp.detect_document_state(orig, status), pp.detect_document_state(cut, status)
         assert a == b, (name, "document state", a, b)
         assert pp.detect_bot_challenge(orig) == pp.detect_bot_challenge(cut), (name, "vendor")
-    if kind == "page":
+    if kind in ("page", "page_app"):
         assert pp.category_details(orig) == pp.category_details(cut), (name, "category")
+    if kind == "page_app":
+        a, b = pp.detect_document_state(orig, status), pp.detect_document_state(cut, status)
+        assert a == b, (name, "document state", a, b)
+        assert pp.category_page_missing(orig) == pp.category_page_missing(cut), (name, "missing")
+        assert pp.next_flight(cut), (name, "the cut kept no RSC payload")
     if kind == "stores":
         a, b = pp.parse_store_set(orig, "75001"), pp.parse_store_set(cut, "75001")
         assert a == b, (name, "stores")
@@ -258,6 +301,7 @@ def main():
     for name, (fname, kind, spec, stores, keep) in SOURCES.items():
         orig = (src / fname).read_text(encoding="utf-8")
         cut = {"search": lambda: cut_search(orig, keep), "page": lambda: cut_page(orig),
+               "page_app": lambda: cut_page_app(orig),
                "landing": lambda: cut_landing(orig), "stores": lambda: cut_stores(orig),
                "verbatim": lambda: orig, "json": lambda: orig}[kind]()
         verify(name, kind, orig, cut, spec, stores)
