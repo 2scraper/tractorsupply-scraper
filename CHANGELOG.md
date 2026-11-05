@@ -15,6 +15,10 @@ said so at the top of its release notes.
 > `CircuitBreakerFallbackException` is `backend_unavailable`. Exit codes are
 > unchanged.
 
+### Changed
+
+- CI only: the scheduled canary now starts at 05:47 UTC (Mondays) instead of 06:20, so canaries that share one Scraping Browser profile no longer start at the same time and lock each other out.
+
 ### Fixed
 
 - **Category pages in the site's new build resolve again.** The site now
