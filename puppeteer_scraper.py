@@ -225,13 +225,9 @@ class _Ops:
                     err = e
                     if (attempt < page_flow.CDP_CONNECT_ATTEMPTS
                             and page_flow.cdp_should_retry(str(e))):
-                        logger.warning("The Scraping Browser profile did not "
-                                       "accept the connection (attempt %d/%d) "
-                                       "— it may still be locked by a previous "
-                                       "run; retrying in %.0fs.", attempt,
-                                       page_flow.CDP_CONNECT_ATTEMPTS,
-                                       page_flow.CDP_LOCKED_WAIT_S)
-                        time.sleep(page_flow.CDP_LOCKED_WAIT_S)
+                        logger.warning("%s", page_flow.cdp_retry_message(
+                            _mask_credentials(str(e)), attempt))
+                        time.sleep(page_flow.cdp_retry_wait(str(e)))
                         continue
                     break
             if err is not None:
@@ -373,8 +369,24 @@ class _Ops:
         return _proxy_failure(text)
 
     def relaunch(self):
+        """See playwright_scraper._Ops.relaunch: on a remote browser, a new
+        page in the same profile, or a reconnect when that fails."""
         if self.remote:
             self.landed = False
+            try:
+                self.bridge.run(self.page.close(), timeout=15)
+            except Exception as e:  # noqa: BLE001 — it may already be gone
+                logger.debug("Ignoring error closing the old page: %s", e)
+            try:
+                self.page = self.bridge.run(self.browser.newPage(), timeout=30)
+                return
+            except Exception as e:  # noqa: BLE001
+                logger.debug("New page failed (%s); reconnecting.", _mask_credentials(str(e)))
+            try:
+                self.bridge.run(self.browser.disconnect(), timeout=15)
+            except Exception:  # noqa: BLE001
+                pass
+            self.open()
             return
         try:
             self.bridge.run(self.browser.close(), timeout=30)
