@@ -31,9 +31,10 @@ only "144", and with the stores the prices are for.
 
 ## Start with the part most scrapers bury
 
-**On this site you need the 2Captcha Scraping Browser API, with a US exit —
-and on 2026-11-05 even that did not reach the product data.** See the second
-table: access here changes, and the dates matter.
+**On this site you need the 2Captcha Scraping Browser API, with a US exit.**
+On 2026-11-05 even that did not reach the product data; on 2026-11-26 it did
+again, once the search endpoint was called the way the site's own worker
+calls it (the third table). Access here changes, and the dates matter.
 
 Measured 2026-09-28. Akamai Bot Manager fronts the whole site:
 
@@ -57,13 +58,25 @@ a US residential proxy exit (a Verizon address):
 | US residential proxy, headful Chromium | category page refused, and the search endpoint refused (exit 3) |
 | Scraping Browser, `country-us`, four profiles | homepage 200 on all four; the store lookup and a category page served on most; **the search endpoint (`catalogSearch`) refused on all four** |
 
-So on that day no client here obtained product rows. Two more things the
-re-measurement showed:
+So on that day no client here obtained product rows.
 
-- **A profile is refused after a handful of requests**, and a retry inside
-  it does not help: the profile's cookies are what is refused. The run says
-  so and suggests another `pid`; other profiles were served where a flagged
-  one was not.
+Re-measured 2026-11-26, from a German residential address and through fresh
+Scraping Browser profiles with US exits (Comcast, Verizon, Charter):
+
+| client | answer |
+|---|---|
+| plain curl, residential | `robots.txt`: the HTTP/2 stream is reset (`INTERNAL_ERROR`), no 403 page |
+| local Chromium (Playwright), residential | `ERR_HTTP2_PROTOCOL_ERROR`, exit 5 |
+| local Chrome through Selenium, residential | **served**: 48 rows, and the ZIP lookup was served too |
+| **Scraping Browser, `country-us`** | **served** — the search endpoint answers only with the site's search worker as referrer, which this version sends; the ZIP lookup (`fetchstoredetails`) is refused on every profile (403), see "1. Prices are per store" below |
+
+Two more things the re-measurements showed:
+
+- **A profile is refused after a handful of requests** — on 2026-11-26,
+  after about 12 runs in 4 minutes on one profile — and a retry inside it
+  does not help: the profile's cookies are what is refused. The run says so
+  and suggests another `pid`; the same commands on another profile were
+  served. Spread long or repeated work over several `pid`s.
 - **The site serves category pages in two builds** — the older one carrying
   `__NEXT_DATA__`, and a newer App Router one carrying the same data in its
   React Server Components stream — and which one depends on the browser
@@ -71,8 +84,8 @@ re-measurement showed:
 
 A third-party audit (November 2026) reported a home residential connection
 on which the Selenium engine *was* served (a search of 87 rows, a category
-of 48). It was not reproduced here: the residential proxy exit above was
-refused.
+of 48). The residential proxy exit of 2026-11-05 was refused; on 2026-11-26
+a German home connection was served through Selenium (the third table).
 
 Even through the Scraping Browser, *navigating* to a category page is
 refused. What is let through is what the site's own front end does: load the
@@ -85,15 +98,16 @@ id and **no products**: the grid is painted in the browser from a search
 endpoint (`/gtwy/SiteSearch/catalogSearch`, newline-delimited JSON). This
 repo reads that endpoint directly.
 
-Live, through one `country-us` profile, all complete:
+Live on 2026-11-26, through fresh `country-us` profiles, all complete:
 
 | engine | listing | rows | time |
 |---|---|---|---|
-| Playwright | category `poultry-feed-treats`, 3 pages | 144 of 272 | 11 s |
-| pyppeteer | search "dog food", price ascending, 3 pages | 144 of 1,076 | 8 s |
-| Playwright | search "dog food", ZIP 75001, 2 pages of 200 | 400 of 1,076 | — |
-| Playwright | department `pet`, 2 pages | 96 of 14,678 | — |
-| Selenium | local Chrome | exit 3, `blocked_akamai` (see Engines) | — |
+| Playwright | category `poultry-feed-treats`, 3 pages | 144 of 265 | 24 s |
+| pyppeteer | search "dog food", price ascending, 3 pages | 144 of 1,076 | 36 s |
+| Playwright | search "dog food", 2 pages of 200 | 400 of 1,076 | 19 s |
+| Playwright | category `dog-food`, pages of 200 | 1,076 of 1,076 | 28 s |
+| Playwright | department `pet`, 5 pages | 240 | 39 s |
+| Selenium | local Chrome, German home connection | 48 (category) | 15 s |
 
 ---
 
@@ -170,6 +184,28 @@ runs from two exits price the same catalogue at the same store), and
 `store_id` / `zip_code` are in every row and the sidecar. `diff_runs.py`
 refuses to compare two runs priced at different stores.
 
+> **Since 2026-11 `--zip` is not honoured through the Scraping Browser.**
+> The site's ZIP lookup answers HTTP 403 even to its own front end there.
+> The run then prices against the store the site itself assigned the
+> session from its exit address (read from the session's cookies), and says
+> so in a warning naming that store and ZIP. `store_id` / `zip_code` in the
+> rows are that store's, so `diff_runs.py` still refuses to compare runs
+> priced at different stores.
+>
+> To price at a store of your choosing, name it outright with `--store` and
+> `--zone` (no ZIP lookup is sent):
+>
+> ```bash
+> ./venv/bin/python playwright_scraper.py --search "dog food" \
+>     --store 2661,539,444 --zone 13 --zip 75001
+> ```
+>
+> The stores set stock and assortment, the zone sets the prices — a wrong
+> zone returns plausible, wrong prices with no error, so the two flags go
+> together. Both are in your browser's tractorsupply.com cookies
+> (`lpStoreNum`, `lpZoneId`) and in any earlier run's `.meta.json`
+> (`store_ids`, `zone`).
+
 ### 2. `price` is the low end of a range
 
 A product with sizes has one row and several prices. The endpoint's own
@@ -227,7 +263,7 @@ says where it pointed, rather than calling the catalogue empty.
 |---|---|
 | `playwright_scraper.py` | primary. Served over `--cdp-endpoint`. |
 | `puppeteer_scraper.py` | served over `--cdp-endpoint`. pyppeteer is effectively unmaintained; here for parity. |
-| `selenium_scraper.py` | chromedriver cannot send the credentials a Scraping Browser endpoint carries, so the Scraping Browser is out of its reach. A local Chrome was refused from every address measured here (2026-09-28 and 2026-11-05); an audit reported it served from a home connection, not reproduced here. A refusal is reported correctly (exit 3). |
+| `selenium_scraper.py` | chromedriver cannot send the credentials a Scraping Browser endpoint carries, so the Scraping Browser is out of its reach (exit 2, saying so). A local Chrome was refused from the addresses measured on 2026-09-28 and 2026-11-05, and served from a German home connection on 2026-11-26 — ZIP lookup included. Measure from your own address; a refusal is reported correctly (exit 3). |
 
 All three share one fetch loop (`page_flow.run_pages`), so they agree on
 exit codes, run status and every retry decision by construction. Each
@@ -266,7 +302,7 @@ live connection. Use several `pid`s, one run each.
 |---|---|
 | 0 | ok |
 | 1 | crash (a bug — please report it) |
-| 2 | bad usage, or a listing the site does not have: an unknown category, a ZIP with no store |
+| 2 | bad usage, or a listing the site does not have: an unknown category, a ZIP with no store (only where the ZIP lookup is served — through the Scraping Browser it is refused and the run prices at the session's store instead — see "1. Prices are per store") |
 | 3 | blocked: Akamai refused the client (`stop_reason: blocked_akamai`) |
 | 4 | the listing is genuinely empty; nothing is written, so an earlier good file survives |
 | 5 | the data never arrived: a timeout, a remote-browser error (401 = expired endpoint), a reset connection, or the endpoint refused the parameters and said why. A reset is also how Akamai refused local Chromium in testing, and the error says so; it stays 5 rather than 3 because a reset alone does not prove a refusal |
@@ -294,6 +330,12 @@ both complete, and runs of different listings, orderings or store sets, since
 every line would then describe the question rather than the site.
 `removed` means "no longer in the slice fetched", not "discontinued", unless
 both runs fetched every page.
+
+Through the Scraping Browser, name the stores with `--store` and `--zone` in
+both runs. Without them each profile is priced at the store the site assigned
+it, two profiles get two different stores (WOODSTOCK GA and EDENTON NC in one
+test), and the diff is refused. With the same `--store`/`--zone`, two runs on
+two profiles compared cleanly (2026-11-26: 0 added, 0 removed, 0 changed).
 
 ## Tests
 

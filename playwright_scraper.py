@@ -62,6 +62,7 @@ from playwright.sync_api import (sync_playwright, Error as PWError,
                                  TimeoutError as PWTimeout)
 
 from product_parser import MAX_PAGE_SIZE, MODES, SORTS, DEFAULT_ZIP, Query
+import product_parser
 from output_writer import EXIT_API_ERROR
 import page_flow
 from proxy_pool import (from_args as proxy_pool_from_args, to_playwright, mask,
@@ -93,12 +94,17 @@ _PROXY_ERROR_MARKERS = (
 # `zoneid`). The AbortController is the timeout: a browser fetch() has none
 # of its own, and every remote call this repo makes is bounded.
 FETCH_JS = """
-async ([url, method, body, headersJson, timeoutMs]) => {
+async ([url, method, body, headersJson, timeoutMs, referrer]) => {
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  // abort() with a named reason: fetch() then rejects with THIS error, so a
+  // timeout reads "TimeoutError: fetch timed out after N s" instead of the
+  // bare "AbortError: signal is aborted without reason" (audit 2026-11-26).
+  const timer = setTimeout(() => ctl.abort(new DOMException(
+    "fetch timed out after " + Math.round(timeoutMs / 1000) + " s", "TimeoutError")), timeoutMs);
   try {
     const init = {method, credentials: "include", signal: ctl.signal,
                   headers: JSON.parse(headersJson)};
+    if (referrer) init.referrer = referrer;  // catalogSearch: the site's worker
     if (body !== null) {
       init.headers["content-type"] = "application/json";
       init.body = body;
@@ -206,7 +212,7 @@ class _Ops:
         try:
             got = self.page.evaluate(
                 FETCH_JS, [req.url, req.method, req.body_json, req.headers_json,
-                           timeout_ms])
+                           timeout_ms, getattr(req, "referrer", None)])
         except (PWError, PWTimeout) as e:
             return None, "", None, _mask_credentials(str(e))
         if not isinstance(got, dict):
@@ -214,6 +220,15 @@ class _Ops:
         if got.get("error"):
             return None, "", None, str(got["error"])
         return got.get("status"), got.get("text") or "", got.get("waf"), None
+
+    def site_cookies(self) -> dict:
+        """The site's cookies in this session (name -> value)."""
+        try:
+            return {c["name"]: c["value"]
+                    for c in self.context.cookies(product_parser.BASE)}
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Reading cookies failed: %s", _mask_credentials(str(e)))
+            return {}
 
     def proxy_failure(self, text: str) -> str:
         return _proxy_failure(text)
@@ -283,7 +298,26 @@ def _connect_remote(pw, args):
             f"{page_flow.cdp_connect_hint(str(e))}"
         ) from None
     context = browser.contexts[0] if browser.contexts else browser.new_context()
-    return browser, context, context.new_page()
+    # A tab can crash as it opens ("BrowserContext.new_page: Target crashed",
+    # seen live 2026-11). That is the remote browser's failure, not this
+    # code's: one more tab in the SAME connection (a second connection to the
+    # profile would only meet profile_locked), then the exit-5 error a refused
+    # connection gets instead of a traceback (audit 2026-11-26).
+    for attempt in (1, 2):
+        try:
+            return browser, context, context.new_page()
+        except PWError as err:
+            text = _mask_credentials(str(err))
+            if attempt == 1:
+                logger.warning("Opening a tab in the remote browser failed (%s); "
+                               "trying once more.", text)
+                continue
+            raise PWError(
+                f"could not open a tab over --cdp-endpoint "
+                f"{_mask_credentials(args.cdp_endpoint)}: {text}\n"
+                f"The remote browser failed, not the site. Run again; if it "
+                f"repeats, use another pid."
+            ) from None
 
 
 # Every `scheme://user:pass@` in a string, however many times it occurs.
@@ -387,6 +421,17 @@ def parse_args(argv=None):
                    help="US ZIP code whose nearby stores the prices and stock "
                         "are for (default %s, Brentwood TN). Prices differ "
                         "between stores." % DEFAULT_ZIP)
+    p.add_argument("--store", default=None, metavar="IDS",
+                   help="Store numbers to price at, nearest first, comma-"
+                        "separated (e.g. 2661,539,444); with --zone. Use when "
+                        "the site refuses its ZIP lookup (the Scraping Browser, "
+                        "since 2026-11). Your browser's lpStoreNum cookie, or "
+                        "store_ids in an earlier run's .meta.json.")
+    p.add_argument("--zone", default=None,
+                   help="The pricing zone of those stores (e.g. 13); with "
+                        "--store. It sets the prices: a wrong zone gives wrong "
+                        "prices with no error. lpZoneId cookie, or zone in an "
+                        "earlier run's .meta.json.")
     p.add_argument("--page-size", type=page_flow.page_size_flag, default=None,
                    help="Products per request (default 48, as the site's own "
                         "grid; at most %d, which the endpoint enforces)."
@@ -482,7 +527,8 @@ if __name__ == "__main__":
         # A remote browser refusing the connection is a REMOTE API failure
         # (exit 5), not a crash in this code (exit 1).
         text = _mask_credentials(str(e))
-        if "profile_locked" in text or "connect to --cdp-endpoint" in text:
+        if ("profile_locked" in text or "connect to --cdp-endpoint" in text
+                or "open a tab over --cdp-endpoint" in text):
             logger.error("%s", text)
             sys.exit(EXIT_API_ERROR)
         raise

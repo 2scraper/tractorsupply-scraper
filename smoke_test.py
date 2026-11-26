@@ -291,6 +291,76 @@ def check_stores_are_read_from_the_zip_lookup():
     equal("garbage is None", P.parse_store_set("<html>", "1"), None)
 
 
+def check_stores_fall_back_to_the_sessions_own_cookies():
+    """Audit 2026-11-26: fetchstoredetails answers 403 even to the site's own
+    front end; the server still writes the session's store into cookies."""
+    import product_parser as P
+    c = {"lpZipCodeNum": "31008", "lpStoreName": "BYRON%20GA", "lpStoreNum": "787",
+         "lpZoneId": "23",
+         "tsc-ssc-ccokie": "%7B%22storeNum%22%3A%222215%7C787%7C1147%7C2623%7C1828%7C1790%7C1189%22"
+                           "%2C%22lpZipCode%22%3A%2231008%22%2C%22state%22%3A%22GA%22%7D"}
+    s = P.store_set_from_cookies(c)
+    equal("the home store goes first, then the nearby ones, six in all", s.store_ids,
+          ("787", "2215", "1147", "2623", "1828", "1790"))
+    equal("zone, ZIP, state and name come from the cookies",
+          (s.zone, s.zip_code, s.state, s.home_store_name), ("23", "31008", "GA", "BYRON GA"))
+    equal("no cookies yet is None, not a store set", P.store_set_from_cookies({}), None)
+    equal("no zone is None: the search endpoint fails without it",
+          P.store_set_from_cookies({k: v for k, v in c.items() if k != "lpZoneId"}), None)
+
+
+def check_catalog_search_names_the_sites_worker_as_referrer():
+    """Akamai serves catalogSearch only with the search worker as referrer."""
+    import product_parser as P
+    q = P.Query(mode="search", keyword="dog food")
+    q.stores = P.StoreSet(zip_code="31008", store_ids=("787",), zone="23")
+    r = P.request_for(q, 1)
+    equal("catalogSearch carries the worker referrer", r.referrer,
+          P.BASE + "/plp/workers/plp-search-worker.js")
+    equal("...and the store's own zone", r.headers["zoneid"], "23")
+    equal("the store lookup carries none", P.store_request("75001").referrer, None)
+
+
+def check_a_bare_abort_error_is_a_timeout():
+    """Only the fetch() timer aborts a request here (audit 2026-11-26)."""
+    import page_flow as F
+    from types import SimpleNamespace as NS
+    equal("AbortError reads as a timeout",
+          F.stop_reason_for(NS(error="AbortError: signal is aborted without reason")),
+          "page_load_timeout")
+    equal("the named TimeoutError too",
+          F.stop_reason_for(NS(error="TimeoutError: fetch timed out after 45 s")),
+          "page_load_timeout")
+    equal("a reset connection is still not a timeout",
+          F.stop_reason_for(NS(error="TypeError: Failed to fetch")), "transport_error")
+
+
+def check_store_and_zone_flags():
+    """--store/--zone price a run at named stores without the ZIP lookup."""
+    import page_flow as F
+    from types import SimpleNamespace as NS
+    errors = []
+    def err(msg):
+        errors.append(msg)
+        raise SystemExit(2)
+    s = F.stores_from_flags(NS(store="2661, 539|444", zone="13", zip="75001"), err)
+    equal("both flags: the named stores in order, the zone, the ZIP kept",
+          (s.store_ids, s.zone, s.zip_code), (("2661", "539", "444"), "13", "75001"))
+    equal("neither flag: None (the ZIP lookup decides)",
+          F.stores_from_flags(NS(store=None, zone=None, zip=None), err), None)
+    for bad, why in ((NS(store="2661", zone=None), "--store alone"),
+                     (NS(store=None, zone="13"), "--zone alone"),
+                     (NS(store="2661", zone="1"), "zone 1 (the endpoint's NPE)"),
+                     (NS(store="abc", zone="13"), "not store numbers"),
+                     (NS(store="1,2,3,4,5,6,7", zone="13"), "more than six stores")):
+        try:
+            F.stores_from_flags(bad, err)
+            refused = False
+        except SystemExit:
+            refused = True
+        check("refused: " + why, refused)
+
+
 def check_category_ids_come_from_the_right_place():
     import product_parser as P
     equal("a category page: catIdDetails", P.category_details(fx("page_category")),

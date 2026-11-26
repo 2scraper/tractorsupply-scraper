@@ -93,6 +93,8 @@ ORIGIN_URL = BASE + "/"
 
 SEARCH_PATH = "/gtwy/SiteSearch/catalogSearch"
 STORE_PATH = "/wcs/resources/store/10151/zipcode/fetchstoredetails"
+# The site's search worker: catalogSearch is served only with it as referrer.
+SEARCH_WORKER = BASE + "/plp/workers/plp-search-worker.js"
 
 # ---------------------------------------------------------------------------
 # Paging and ordering, measured
@@ -159,6 +161,11 @@ class ApiRequest:
     headers: Dict[str, str] = field(default_factory=dict)
     method: str = "GET"
     body: Optional[Dict[str, Any]] = None
+    # The page fetch() names as its referrer. Since 2026-11 Akamai refuses
+    # catalogSearch (HTTP 403 "Access Denied") unless the referrer is the
+    # site's own search worker — the request the site itself sends comes
+    # from that worker. Same request, worker referrer: 200 (audit 2026-11-26).
+    referrer: Optional[str] = None
 
     @property
     def url(self) -> str:
@@ -285,7 +292,8 @@ def request_for(query: Query, page: int) -> ApiRequest:
         params["state"] = stores.state
     headers = {"accept": "*/*", "channel": "web", "x-api-version": "v3",
                "index": "1", "zoneid": stores.zone if stores else "1"}
-    return ApiRequest(SEARCH_PATH, page, params=params, headers=headers)
+    return ApiRequest(SEARCH_PATH, page, params=params, headers=headers,
+                      referrer=SEARCH_WORKER)
 
 
 # ---------------------------------------------------------------------------
@@ -580,6 +588,42 @@ def parse_store_set(text: Any, zip_code: str) -> Optional[StoreSet]:
                     zone=zone,
                     state=_str(first.get("state")),
                     home_store_name=_str(first.get("storeName")))
+
+
+def store_set_from_cookies(cookies: Dict[str, str]) -> Optional[StoreSet]:
+    """The stores the SITE assigned this browser, from its own cookies.
+
+    Since 2026-11 the ZIP lookup (fetchstoredetails) answers HTTP 403 even to
+    the site's own front end in a Scraping Browser session. The server still
+    picks a store for the session from its exit address and writes it into
+    cookies on the first page: `lpStoreNum`, `lpZoneId` (the pricing zone the
+    search endpoint needs), `lpStoreName`, and `tsc-ssc-ccokie` — JSON with
+    the nearby `storeNum` list, `lpZipCode` and `state` (audit 2026-11-26).
+    None when the cookies are not there yet or carry no zone.
+    """
+    zone = unquote(str(cookies.get("lpZoneId") or "")).strip()
+    home = unquote(str(cookies.get("lpStoreNum") or "")).strip()
+    try:
+        ssc = json.loads(unquote(str(cookies.get("tsc-ssc-ccokie") or "{}")))
+    except ValueError:
+        ssc = {}
+    if not isinstance(ssc, dict):
+        ssc = {}
+    ids = [i.strip() for i in str(ssc.get("storeNum") or "").split("|") if i.strip()]
+    if home and home not in ids:
+        ids.insert(0, home)
+    elif home:
+        ids.remove(home)
+        ids.insert(0, home)
+    if not zone or not ids or not all(i.isdigit() for i in ids):
+        return None
+    zip_code = (unquote(str(cookies.get("lpZipCodeNum") or "")).strip()
+                or str(ssc.get("lpZipCode") or "").strip())
+    state = (_str(ssc.get("state"))
+             or _str(unquote(str(cookies.get("deliveryZipState") or ""))))
+    name = _str(unquote(str(cookies.get("lpStoreName") or "")))
+    return StoreSet(zip_code=zip_code, store_ids=tuple(ids[:STORES_PER_REQUEST]),
+                    zone=zone, state=state, home_store_name=name)
 
 
 _NEXT_DATA_RE = re.compile(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.S)
