@@ -57,6 +57,7 @@ from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.options import Options
 
 from product_parser import MAX_PAGE_SIZE, MODES, SORTS, DEFAULT_ZIP
+import product_parser
 from output_writer import EXIT_API_ERROR
 import page_flow
 from proxy_pool import (from_args as proxy_pool_from_args, mask, ROTATE_MODES,
@@ -89,9 +90,18 @@ FETCH_JS = """
 var done = arguments[arguments.length - 1];
 var url = arguments[0], method = arguments[1], body = arguments[2];
 var ctl = new AbortController();
-var timer = setTimeout(function () { ctl.abort(); }, arguments[4]);
+// abort() with a named reason, so a timeout reads "TimeoutError: fetch timed
+// out after N s", not "AbortError: signal is aborted without reason".
+var timeoutMs = arguments[4];  // captured: inside the callback `arguments` is its own
+var timer = setTimeout(function () {
+  ctl.abort(new DOMException("fetch timed out after " + Math.round(timeoutMs / 1000) + " s",
+                             "TimeoutError"));
+}, timeoutMs);
 var init = {method: method, credentials: "include", signal: ctl.signal,
             headers: JSON.parse(arguments[3])};
+// arguments[5] is the referrer when the call passes one (catalogSearch: the
+// site's own search worker); the async callback is always the last argument.
+if (arguments.length > 6 && arguments[5]) init.referrer = arguments[5];
 if (body !== null) {
   init.headers["content-type"] = "application/json";
   init.body = body;
@@ -256,11 +266,19 @@ class _Ops:
     def wait_ms(self, ms: int) -> None:
         time.sleep(ms / 1000.0)
 
+    def site_cookies(self) -> dict:
+        """The site's cookies in this session (name -> value)."""
+        try:
+            return {c["name"]: c["value"] for c in self.driver.get_cookies()}
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Reading cookies failed: %s", _mask_credentials(str(e)))
+            return {}
+
     def fetch(self, req, timeout_ms: int = page_flow.FETCH_TIMEOUT_MS):
         try:
             got = self.driver.execute_async_script(
                 FETCH_JS, req.url, req.method, req.body_json, req.headers_json,
-                timeout_ms)
+                timeout_ms, getattr(req, "referrer", None))
         except WebDriverException as e:
             return None, "", None, _mask_credentials(str(e))
         if not isinstance(got, dict):
@@ -370,6 +388,17 @@ def parse_args(argv=None):
                    help="US ZIP code whose nearby stores the prices and stock "
                         "are for (default %s, Brentwood TN). Prices differ "
                         "between stores." % DEFAULT_ZIP)
+    p.add_argument("--store", default=None, metavar="IDS",
+                   help="Store numbers to price at, nearest first, comma-"
+                        "separated (e.g. 2661,539,444); with --zone. Use when "
+                        "the site refuses its ZIP lookup (the Scraping Browser, "
+                        "since 2026-11). Your browser's lpStoreNum cookie, or "
+                        "store_ids in an earlier run's .meta.json.")
+    p.add_argument("--zone", default=None,
+                   help="The pricing zone of those stores (e.g. 13); with "
+                        "--store. It sets the prices: a wrong zone gives wrong "
+                        "prices with no error. lpZoneId cookie, or zone in an "
+                        "earlier run's .meta.json.")
     p.add_argument("--page-size", type=page_flow.page_size_flag, default=None,
                    help="Products per request (default 48, as the site's own "
                         "grid; at most %d, which the endpoint enforces)."

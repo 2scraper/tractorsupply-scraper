@@ -32,6 +32,7 @@ the Scraping Browser navigating) was Akamai's plain Access Denied page, with
 no widget on it: nothing a solver could be paid to answer. See the README.
 """
 
+import re
 import logging
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Tuple
@@ -44,6 +45,7 @@ from product_parser import (BASE, DEFAULT_PAGE_SIZE, category_page_missing, DEFA
                             detect_page_state,
                             pages_available, parse_page, parse_store_set,
                             query_from_url, relevance_share, request_for,
+                            store_set_from_cookies, StoreSet, STORES_PER_REQUEST,
                             search_redirect, store_request, total_results)
 
 log = logging.getLogger("page_flow")
@@ -256,7 +258,11 @@ def target_gone(error: Optional[str]) -> bool:
     return any(m in (error or "") for m in _TARGET_GONE)
 
 
-_TIMEOUT_WORDS = ("Timeout", "timed out", "did not return within", "TimeoutError")
+# "AbortError" too: the only thing that aborts a fetch() here is its own
+# timeout timer, and a browser that ignores abort(reason) still reports the
+# bare AbortError (audit 2026-11-26).
+_TIMEOUT_WORDS = ("Timeout", "timed out", "did not return within", "TimeoutError",
+                  "AbortError", "signal is aborted")
 
 
 def stop_reason_for(outcome) -> str:
@@ -331,9 +337,45 @@ def build_query(args, error: Callable[[str], None]) -> Query:
     why = query.validate()
     if why:
         error(why)
+    query.stores = stores_from_flags(args, error)
     if args.pages < 1:
         error("--pages must be at least 1")
     return query
+
+
+def stores_from_flags(args, error: Callable[[str], None]):
+    """--store/--zone: the stores and pricing zone named outright.
+
+    Since 2026-11 the site refuses its ZIP lookup in a Scraping Browser
+    session, so --zip alone cannot pick the stores there. The search
+    endpoint takes any stores and zone it is given (measured 2026-11-26:
+    stock and assortment follow the STORES, the price follows the ZONE), so
+    these two flags price a run at a store of the user's choosing without
+    the lookup. Both or neither: the right zone is what makes prices right,
+    and a wrong one returns plausible, wrong prices with no error.
+    """
+    store, zone = getattr(args, "store", None), getattr(args, "zone", None)
+    if not store and not zone:
+        return None
+    if not (store and zone):
+        error("--store and --zone go together: the stores set stock, the zone "
+              "sets prices, and a wrong zone gives wrong prices with no error. "
+              "Both are in your browser's tractorsupply.com cookies "
+              "(lpStoreNum, lpZoneId) and in any earlier run's .meta.json "
+              "(store_ids, zone).")
+    ids = [i.strip() for i in re.split(r"[,|\s]+", store) if i.strip()]
+    if not ids or not all(i.isdigit() for i in ids):
+        error("--store takes store numbers, nearest first, separated by commas "
+              "(e.g. 2661,539,444)")
+    if len(ids) > STORES_PER_REQUEST:
+        error("--store takes at most %d stores (the site's own request names %d)"
+              % (STORES_PER_REQUEST, STORES_PER_REQUEST))
+    zone = zone.strip()
+    if not zone.isdigit() or zone.lstrip("0") in ("", "1"):
+        error("--zone %r is not a pricing zone: a number such as 13 (zone 1 "
+              "makes the endpoint fail)" % zone)
+    return StoreSet(zip_code=(getattr(args, "zip", None) or "").strip(),
+                    store_ids=tuple(ids), zone=zone)
 
 
 def query_summary(query: Query) -> dict:
@@ -575,7 +617,8 @@ def _rotate(ops, pool, has_pool: bool, why: str, attempt: int, budget: int,
 
 def fetch_one_page(ops, args, pool, query: Query, page_num: int,
                    mask: Callable[[str], str] = lambda s: s,
-                   req=None, classify_fn=None) -> Tuple[PageOutcome, str]:
+                   req=None, classify_fn=None,
+                   quiet_block: bool = False) -> Tuple[PageOutcome, str]:
     """Fetch one request with the loop's retries and rotations.
 
     Returns (outcome, text): the outcome carries the state and any failure,
@@ -683,10 +726,16 @@ def fetch_one_page(ops, args, pool, query: Query, page_num: int,
         debug = _save_debug(args, page_num, text)
         where = ("the homepage landing (%s), before %s was sent" % (ORIGIN_URL, req.label)
                  if at_landing else req.label)
-        log.error("Blocked by %s on %s — saved to %s. This is exit 3, "
-                  "distinct from an empty listing (exit 4). %s",
-                  outcome.blocked_by, where, debug,
-                  refusal_advice(state, remote=getattr(ops, "remote", False)))
+        if quiet_block:
+            # The caller has a fallback (the store lookup: the session's own
+            # store cookies) and reports the refusal itself if that fails too.
+            log.warning("Refused by %s on %s — saved to %s.",
+                        outcome.blocked_by, where, debug)
+        else:
+            log.error("Blocked by %s on %s — saved to %s. This is exit 3, "
+                      "distinct from an empty listing (exit 4). %s",
+                      outcome.blocked_by, where, debug,
+                      refusal_advice(state, remote=getattr(ops, "remote", False)))
     return outcome, text
 
 
@@ -786,18 +835,56 @@ def resolve_query(ops, args, pool, query: Query,
     exit 5. Raises ResolveError for an answer the user has to change: a ZIP
     with no store, a category that does not exist.
     """
+    if query.stores is not None:
+        # --store/--zone named them outright: no lookup to send or refuse.
+        log.info("Pricing against store %s and %d more, zone %s, as --store/--zone "
+                 "named them.", query.stores.home, len(query.stores.store_ids) - 1,
+                 query.stores.zone)
+        if query.mode != "category":
+            return None
+        return _resolve_category(ops, args, pool, query, mask)
     outcome, text = fetch_one_page(ops, args, pool, query, 1, mask,
                                    req=store_request(query.zip_code),
-                                   classify_fn=_json_state)
-    if not _served_or_failed(outcome, "The store lookup"):
-        return outcome
-    stores = parse_store_set(text, query.zip_code)
-    if stores is None:
-        raise ResolveError(
-            "tractorsupply.com lists no store near ZIP %s, and its search "
-            "endpoint refuses a request that names no store. Pass a --zip in "
-            "the lower 48 states (the site answered 00000 and Anchorage's "
-            "99501 with an empty store list)." % query.zip_code)
+                                   classify_fn=_json_state, quiet_block=True)
+    if outcome.ok and outcome.state == "content":
+        stores = parse_store_set(text, query.zip_code)
+        if stores is None:
+            raise ResolveError(
+                "tractorsupply.com lists no store near ZIP %s, and its search "
+                "endpoint refuses a request that names no store. Pass a --zip in "
+                "the lower 48 states (the site answered 00000 and Anchorage's "
+                "99501 with an empty store list)." % query.zip_code)
+    else:
+        # Since 2026-11 the ZIP lookup answers 403 even to the site's own
+        # front end in a Scraping Browser session, while the server still
+        # writes the store it chose for the session into cookies (audit
+        # 2026-11-26). Price against that store rather than stop the run,
+        # and say plainly when it is not the ZIP that was asked for.
+        reader = getattr(ops, "site_cookies", None)
+        stores = store_set_from_cookies(reader() if reader else {})
+        if stores is None:
+            if outcome.blocked_by:
+                log.error("The store lookup was refused (%s) and the session "
+                          "carries no store cookies to fall back on. This is "
+                          "exit 3. %s", outcome.blocked_by,
+                          refusal_advice(outcome.state,
+                                         remote=getattr(ops, "remote", False)))
+            _served_or_failed(outcome, "The store lookup")
+            return outcome
+        outcome.blocked_by = None
+        if stores.zip_code and stores.zip_code != query.zip_code:
+            log.warning("The site refused its ZIP lookup, so ZIP %s cannot be "
+                        "honoured: pricing against the store the site assigned "
+                        "this session from its exit address instead — store %s "
+                        "(%s), ZIP %s. Prices and stock are for THAT store. To "
+                        "price at a store of your choosing, pass --store and "
+                        "--zone (your browser's lpStoreNum/lpZoneId cookies, or "
+                        "store_ids/zone in an earlier run's .meta.json).",
+                        query.zip_code, stores.home, stores.home_store_name or "?",
+                        stores.zip_code)
+        else:
+            log.info("The site refused its ZIP lookup; using the store it "
+                     "assigned this session (cookies).")
     query.stores = stores
     log.info("Pricing against store %s (%s) and %d nearby, zone %s, from ZIP %s.",
              stores.home, stores.home_store_name or "?", len(stores.store_ids) - 1,

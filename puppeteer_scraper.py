@@ -49,6 +49,7 @@ from typing import Optional
 from pyppeteer import launch, connect
 
 from product_parser import MAX_PAGE_SIZE, MODES, SORTS, DEFAULT_ZIP
+import product_parser
 from output_writer import EXIT_API_ERROR
 import page_flow
 from proxy_pool import (from_args as proxy_pool_from_args, mask, ROTATE_MODES,
@@ -80,12 +81,17 @@ _PROXY_ERROR_MARKERS = (
 # arguments arrive POSITIONALLY rather than as one array. Same body, same
 # headers, same return shape, same AbortController timeout.
 FETCH_JS = """
-async (url, method, body, headersJson, timeoutMs) => {
+async (url, method, body, headersJson, timeoutMs, referrer) => {
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  // abort() with a named reason: fetch() then rejects with THIS error, so a
+  // timeout reads "TimeoutError: fetch timed out after N s" instead of the
+  // bare "AbortError: signal is aborted without reason" (audit 2026-11-26).
+  const timer = setTimeout(() => ctl.abort(new DOMException(
+    "fetch timed out after " + Math.round(timeoutMs / 1000) + " s", "TimeoutError")), timeoutMs);
   try {
     const init = {method, credentials: "include", signal: ctl.signal,
                   headers: JSON.parse(headersJson)};
+    if (referrer) init.referrer = referrer;  // catalogSearch: the site's worker
     if (body !== null) {
       init.headers["content-type"] = "application/json";
       init.body = body;
@@ -240,8 +246,23 @@ class _Ops:
                     % (_mask_credentials(self.args.cdp_endpoint),
                        _mask_credentials(str(err)),
                        page_flow.cdp_connect_hint(str(err)))) from None
-            self.page = self.bridge.run(self.browser.newPage())
-            return self
+            # A tab can crash as it opens (audit 2026-11-26): one more tab
+            # in the same connection, then the exit-5 error, not a traceback.
+            for attempt in (1, 2):
+                try:
+                    self.page = self.bridge.run(self.browser.newPage())
+                    return self
+                except Exception as e:  # noqa: BLE001 — pyppeteer raises several types
+                    if attempt == 1:
+                        logger.warning("Opening a tab in the remote browser failed (%s); "
+                                       "trying once more.", _mask_credentials(str(e)))
+                        continue
+                    raise RuntimeError(
+                        "could not open a tab over --cdp-endpoint %s: %s\n"
+                        "The remote browser failed, not the site. Run again; if it "
+                        "repeats, use another pid."
+                        % (_mask_credentials(self.args.cdp_endpoint),
+                           _mask_credentials(str(e)))) from None
 
         launch_args = ["--no-sandbox", "--disable-dev-shm-usage",
                        f"--lang={self.args.locale}"]
@@ -352,11 +373,20 @@ class _Ops:
     def wait_ms(self, ms: int) -> None:
         time.sleep(ms / 1000.0)
 
+    def site_cookies(self) -> dict:
+        """The site's cookies in this session (name -> value)."""
+        try:
+            return {c["name"]: c["value"]
+                    for c in self.bridge.run(self.page.cookies(product_parser.BASE), timeout=30)}
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Reading cookies failed: %s", _mask_credentials(str(e)))
+            return {}
+
     def fetch(self, req, timeout_ms: int = page_flow.FETCH_TIMEOUT_MS):
         try:
             got = self.bridge.run(self.page.evaluate(
                 FETCH_JS, req.url, req.method, req.body_json, req.headers_json,
-                timeout_ms), timeout=timeout_ms / 1000 + 15)
+                timeout_ms, getattr(req, "referrer", None)), timeout=timeout_ms / 1000 + 15)
         except Exception as e:  # noqa: BLE001
             return None, "", None, _mask_credentials(str(e))
         if not isinstance(got, dict):
@@ -498,6 +528,17 @@ def parse_args(argv=None):
                    help="US ZIP code whose nearby stores the prices and stock "
                         "are for (default %s, Brentwood TN). Prices differ "
                         "between stores." % DEFAULT_ZIP)
+    p.add_argument("--store", default=None, metavar="IDS",
+                   help="Store numbers to price at, nearest first, comma-"
+                        "separated (e.g. 2661,539,444); with --zone. Use when "
+                        "the site refuses its ZIP lookup (the Scraping Browser, "
+                        "since 2026-11). Your browser's lpStoreNum cookie, or "
+                        "store_ids in an earlier run's .meta.json.")
+    p.add_argument("--zone", default=None,
+                   help="The pricing zone of those stores (e.g. 13); with "
+                        "--store. It sets the prices: a wrong zone gives wrong "
+                        "prices with no error. lpZoneId cookie, or zone in an "
+                        "earlier run's .meta.json.")
     p.add_argument("--page-size", type=page_flow.page_size_flag, default=None,
                    help="Products per request (default 48, as the site's own "
                         "grid; at most %d, which the endpoint enforces)."
@@ -601,7 +642,8 @@ if __name__ == "__main__":
         # A remote browser refusing the connection is a REMOTE API failure
         # (exit 5), not a crash in this code (exit 1).
         text = _mask_credentials(str(e))
-        if "connect to --cdp-endpoint" in text:
+        if ("connect to --cdp-endpoint" in text
+                or "open a tab over --cdp-endpoint" in text):
             logger.error("%s", text)
             sys.exit(EXIT_API_ERROR)
         raise

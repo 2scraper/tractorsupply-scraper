@@ -9,6 +9,14 @@ said so at the top of its release notes.
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-11-26
+
+> **Behaviour change (2026-11-26):** through the Scraping Browser `--zip` is
+> no longer honoured. The site now refuses its ZIP lookup there (HTTP 403,
+> even to its own front end), so a run prices against the store the site
+> assigned the session and warns that it did. Without this every run ended
+> with exit 3 on the first request.
+
 > **Behaviour change:** `stop_reason` no longer says `page_load_timeout`
 > for a failure that was not a timeout. A closed page, a reset connection or
 > a dead proxy is now `transport_error`, and a backend that kept answering
@@ -19,8 +27,35 @@ said so at the top of its release notes.
 
 - CI only: the scheduled canary now starts at 05:47 UTC (Mondays) instead of 06:20, so canaries that share one Scraping Browser profile no longer start at the same time and lock each other out.
 
+### Added
+
+- `--store` / `--zone`: price a run at stores you name, without the ZIP
+  lookup the site now refuses in a Scraping Browser session. Both or
+  neither: measured 2026-11-26, stock and assortment follow the stores and
+  the price follows the zone, so a wrong zone gives wrong prices silently.
+
+### Documentation
+
+- README re-measured on 2026-11-26: the access tables, the live results
+  table and the engine notes now say what a full run found that day —
+  Scraping Browser served again, the ZIP lookup refused there, local Chrome
+  through Selenium served from a home connection, a profile refused after
+  about 12 runs in 4 minutes, and runs to be compared need `--store/--zone`.
+
 ### Fixed
 
+- **Every run ended with exit 3 again (site change, 2026-11).** Akamai now
+  serves `catalogSearch` only when the referrer is the site's own search
+  worker (`/plp/workers/plp-search-worker.js`), and refuses the ZIP lookup
+  outright. All three engines now send that referrer, and when the lookup
+  is refused the stores and pricing zone come from the cookies the site
+  sets for the session (`lpStoreNum`, `lpZoneId`, `tsc-ssc-ccokie`).
+- A `fetch()` timeout is reported as `TimeoutError: fetch timed out after
+  N s` with `stop_reason: page_load_timeout`, not as `AbortError: signal is
+  aborted without reason` / `transport_error`.
+- A remote tab that crashes as it opens (`Target crashed`) no longer ends
+  the run with a traceback and exit 1: Playwright and pyppeteer try one more
+  tab, then exit 5 ("could not open a tab over --cdp-endpoint").
 - **Category pages in the site's new build resolve again.** The site now
   serves a category page in one of two builds, chosen per browser profile:
   the older one with `__NEXT_DATA__`, and an App Router one whose data sits
