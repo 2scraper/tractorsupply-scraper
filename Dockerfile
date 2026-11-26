@@ -14,6 +14,11 @@ FROM python:3.12-slim
 WORKDIR /app
 
 COPY requirements.txt requirements-playwright.txt ./
+# libatomic1 first: Playwright's bundled Node needs it to RUN `playwright
+# install`, and the slim image stopped shipping it (CI, 2026-11-26:
+# "libatomic.so.1: cannot open shared object file", exit 127).
+RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir -r requirements.txt -r requirements-playwright.txt \
     # Playwright's own apt-get for Chromium's shared-library dependencies —
     # not pip packages, so this has to run as a separate, explicit step.
